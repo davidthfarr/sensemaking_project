@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: sensemaking
+Version: 0.1.0
+Summary: Dynamic narrative sensemaking from social media
+Requires-Python: >=3.9
+Requires-Dist: sentence-transformers
+Requires-Dist: transformers
+Requires-Dist: torch
+Requires-Dist: numpy
+Requires-Dist: tqdm

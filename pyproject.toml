@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sensemaking"
+version = "0.1.0"
+description = "Dynamic narrative sensemaking from social media"
+requires-python = ">=3.9"
+dependencies = [
+    "sentence-transformers",
+    "transformers",
+    "torch",
+    "numpy",
+    "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]

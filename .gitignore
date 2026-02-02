@@ -1,0 +1,50 @@
+# data artifacts
+data/
+*.parquet
+*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+# data artifacts
+data/
+*.parquet
+*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+# Secrets
+.env
+*.key
+*.pem
+*.token
+*.secrets
+
+# Data artifacts
+data/
+*.csv
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+.venv/
+# Secrets
+.env
+*.key
+*.pem
+*.token
+*.secrets
+
+# Data artifacts
+data/
+*.csv
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+.venv/
