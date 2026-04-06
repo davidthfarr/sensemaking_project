@@ -2,7 +2,7 @@
 
 A systems-oriented framework for modeling emerging narratives in dynamic information environments — grounded in situational awareness theory and designed to support analyst comprehension of large-scale, evolving social media discourse.
 
-> Associated paper: *Emerging Narrative Detection in Dynamic Information Environments* (IEEE SMC 2025) and *Modeling Narrative Emergence in Dynamic Information Environments* (IC²S² 2026).
+> Associated paper: *Emerging Narrative Detection in Dynamic Information Environments* (arXiv) and *Modeling Narrative Emergence in Dynamic Information Environments* (Submitted IC²S² 2026).
 > Interactive dashboard: [davidthfarr.github.io/sensemaking](https://davidthfarr.github.io/sensemaking/)
 
 ---
