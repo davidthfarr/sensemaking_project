@@ -9,10 +9,10 @@ from sensemaking.data.schemas import Post
 # -------------------------
 # Configuration
 # -------------------------
-PROCESSED_PATH = Path("data/processed/venezuela/posts_repr.parquet")
-OUTPUT_DIR = Path("data/evaluated/ven/hourly")
+PROCESSED_PATH = Path("data/processed/posts_repr_ck.parquet")
+OUTPUT_DIR = Path("data/evaluated/ck/hourly")
 
-WINDOW_DAYS = 12 #currently in hours
+WINDOW_DAYS = 4 #currently in hours
 STEP_DAYS = 4
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -27,8 +27,8 @@ df = pd.read_parquet(PROCESSED_PATH)
 df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-min_time = df["timestamp"].min().floor("H")
-max_time = df["timestamp"].max().floor("H")
+min_time = df["timestamp"].min().floor("h")
+max_time = df["timestamp"].max().floor("h")
 
 
 # -------------------------
@@ -37,7 +37,7 @@ max_time = df["timestamp"].max().floor("H")
 clusterer = HDBSCANClusterer(
     min_cluster_size=8,
     min_samples=2,
-    stance_weight=0.05,
+    stance_weight=0,
 )
 
 
@@ -62,6 +62,7 @@ while window_start <= max_time:
     posts = [
         Post(
             post_id=row.post_id,
+            user_id=row.user_id,
             timestamp=row.timestamp,
             text=row.text,
             embedding=row.embedding,
