@@ -1,14 +1,9 @@
-# data artifacts
-data/
-*.parquet
-*.csv
-
 # Jupyter
 .ipynb_checkpoints/
 # data artifacts
-data/
-*.parquet
-*.csv
+data/*.parquet
+data/*.csv
+data/processed
 
 # Jupyter
 .ipynb_checkpoints/
@@ -18,11 +13,6 @@ data/
 *.pem
 *.token
 *.secrets
-
-# Data artifacts
-data/
-*.csv
-*.parquet
 
 # Jupyter
 .ipynb_checkpoints/
@@ -31,17 +21,13 @@ data/
 __pycache__/
 .venv/
 venv/
+
 # Secrets
 .env
 *.key
 *.pem
 *.token
 *.secrets
-
-# Data artifacts
-data/
-*.csv
-*.parquet
 
 # Jupyter
 .ipynb_checkpoints/
