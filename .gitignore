@@ -30,6 +30,7 @@ data/
 # Python
 __pycache__/
 .venv/
+venv/
 # Secrets
 .env
 *.key
@@ -48,3 +49,6 @@ data/
 # Python
 __pycache__/
 .venv/
+
+# Mac usage
+.DS_Store
