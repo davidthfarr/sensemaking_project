@@ -4,7 +4,7 @@ from sensemaking.embeddings.stance import ZeroShotStanceLabeler
 from sensemaking.data.schemas import Post
 
 # Load cleaned / filtered data
-df = pd.read_parquet("data/processed/venezuela/ven_en_clean.parquet")
+df = pd.read_parquet("data/processed/ck/posts_from_top_accounts_ck.parquet")
 
 posts = [
     Post(
@@ -17,11 +17,11 @@ posts = [
 ]
 
 # Encode + stance ONCE
-encoder = EmbeddingEncoder(require_cuda=True)
-stance = ZeroShotStanceLabeler(require_cuda=True)
+encoder = EmbeddingEncoder(require_cuda=False)
+#stance = ZeroShotStanceLabeler(require_cuda=False)
 
 posts = encoder(posts)
-posts = stance(posts)
+#posts = stance(posts)
 
 # Persist representation
 out = pd.DataFrame({
@@ -30,7 +30,7 @@ out = pd.DataFrame({
     "timestamp": [p.timestamp for p in posts],
     "text": [p.text for p in posts],
     "embedding": [p.embedding for p in posts],
-    "stance": [p.stance for p in posts],
+    "stance": [0 for p in posts],
 })
 
-out.to_parquet("data/processed/posts_repr.parquet", index=False)
+out.to_parquet("data/processed/posts_repr_ck.parquet", index=False)
