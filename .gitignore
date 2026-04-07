@@ -4,6 +4,7 @@
 data/*.parquet
 data/*.csv
 data/processed
+data/evaluated
 
 # Jupyter
 .ipynb_checkpoints/
