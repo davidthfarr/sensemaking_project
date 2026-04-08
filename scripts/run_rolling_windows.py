@@ -12,8 +12,13 @@ from sensemaking.data.schemas import Post
 PROCESSED_PATH = Path("data/processed/venezuela/posts_repr.parquet")
 OUTPUT_DIR = Path("data/evaluated/ven/hourly")
 
-WINDOW_DAYS = 12 #currently in hours
+WINDOW_DAYS = 12  # currently in hours
 STEP_DAYS = 4
+
+MIN_CLUSTER_SIZE = 8
+MIN_SAMPLES = 2
+STANCE_WEIGHT = 0.05
+CLUSTER_SELECTION_EPSILON = 0.0  # raise to merge fragmented sub-clusters (0.1–0.5)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -35,9 +40,10 @@ max_time = df["timestamp"].max().floor("H")
 # Initialize clusterer
 # -------------------------
 clusterer = HDBSCANClusterer(
-    min_cluster_size=8,
-    min_samples=2,
-    stance_weight=0.05,
+    min_cluster_size=MIN_CLUSTER_SIZE,
+    min_samples=MIN_SAMPLES,
+    stance_weight=STANCE_WEIGHT,
+    cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
 )
 
 
@@ -72,12 +78,12 @@ while window_start <= max_time:
 
     # Cluster
     posts = clusterer.fit_predict(posts)
-    
+
     labels = [p.cluster_id for p in posts if not p.is_noise]
-    
+
     num_clusters = len(set(labels))
     noise_frac = sum(p.is_noise for p in posts) / len(posts)
-    
+
     print(
         f"Window {window_start.date()} | "
         f"posts={len(posts):4d} | "
