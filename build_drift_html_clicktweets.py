@@ -37,15 +37,15 @@ import plotly.graph_objects as go
 # -------------------------
 # Paths / Config
 # -------------------------
-REP_PATH = Path("data/processed/venezuela/posts_repr.parquet")
-EVAL_DIR = Path("data/evaluated/ven/daily")
-OUT_HTML = Path("ven_narrative_drift_click.html")
+REP_PATH = Path("data/processed/posts_repr_ck.parquet")
+EVAL_DIR = Path("data/evaluated/ck/hourly")
+OUT_HTML = Path("ck_narrative_drift_click.html")
 
 TOP_K_REP = 4
 MIN_CLUSTER_POSTS = 8
 
 # lineage matching between adjacent windows (centroid-to-centroid)
-LINEAGE_SIM_THRESHOLD = 0.85
+LINEAGE_SIM_THRESHOLD = 0.8
 
 # tweet sampling within a cluster (for click overlay)
 TWEETS_PER_CLUSTER = 250            # keep this modest: 100–500
@@ -691,7 +691,7 @@ def build_html_with_click(
     steps = [
         dict(
             method="animate",
-            args=[[w], dict(mode="immediate", frame=dict(duration=0, redraw=False), transition=dict(duration=0))],
+            args=[[w], dict(mode="immediate", frame=dict(duration=1000, redraw=False), transition=dict(duration=400))],
             label=w,
         )
         for w in windows
@@ -718,8 +718,8 @@ def build_html_with_click(
                       method="animate",
                       args=[windows, dict(
                           mode="immediate",
-                          frame=dict(duration=700, redraw=False),
-                          transition=dict(duration=200),
+                          frame=dict(duration=1000, redraw=False),
+                          transition=dict(duration=400),
                           fromcurrent=True
                       )],
                     ),
