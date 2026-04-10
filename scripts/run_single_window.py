@@ -24,6 +24,7 @@ WINDOW_DAYS = 7
 STANCE_WEIGHT = 0.1
 MIN_CLUSTER_SIZE = 20
 MIN_SAMPLES = 5
+CLUSTER_SELECTION_EPSILON = 0.0  # raise to merge fragmented sub-clusters (0.1–0.5)
 
 EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"
 STANCE_MODEL = "facebook/bart-large-mnli"
@@ -106,6 +107,7 @@ clusterer = HDBSCANClusterer(
     min_cluster_size=MIN_CLUSTER_SIZE,
     min_samples=MIN_SAMPLES,
     stance_weight=STANCE_WEIGHT,
+    cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
 )
 
 window_posts = clusterer.fit_predict(window_posts)

@@ -26,11 +26,13 @@ class HDBSCANClusterer:
         min_samples: int | None = None,
         stance_weight: float = 0,
         metric: str = "euclidean",
+        cluster_selection_epsilon: float = 0.0,
     ):
         self.min_cluster_size = min_cluster_size
         self.min_samples = min_samples
         self.stance_weight = stance_weight
         self.metric = metric
+        self.cluster_selection_epsilon = cluster_selection_epsilon
 
     def _build_raw_joint_vectors(self, posts: List[Post]) -> np.ndarray:
         embeddings = []
@@ -57,56 +59,27 @@ class HDBSCANClusterer:
         return X / norms
 
     def fit_predict(self, posts: List[Post]) -> List[Post]:
-    
         """
         Cluster posts and assign labels.
         """
-        n = len(posts)
-    
-        # ---- SAFETY GUARD ----
-        min_required = max(
-            self.min_cluster_size,
-            self.min_samples or 1,
-        )
-    
-
-        # Not enough points to cluster: mark all as noise
-        if n < min_required:
-            print(
-                f"Skipping clustering: "
-                f"{n} posts < min_required={min_required}"
-            )
-            for post in posts:
-                post.cluster_id = None
-                post.is_noise = True
-                post.cluster_strength = 0.0
-            return posts
-        # ---------------------
-
-        if not posts:
-            return posts
-
         X = self._build_joint_vectors(posts)
 
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=self.min_cluster_size,
-            min_samples=self.min_samples or self.min_cluster_size,
+            min_samples=self.min_samples,
             metric=self.metric,
-            prediction_data=True,
+            cluster_selection_epsilon=self.cluster_selection_epsilon,
         )
 
         labels = clusterer.fit_predict(X)
-        strengths = clusterer.probabilities_
 
-        for post, label, strength in zip(posts, labels, strengths):
+        for post, label in zip(posts, labels):
             if label == -1:
                 post.cluster_id = None
                 post.is_noise = True
-                post.cluster_strength = float(strength)
             else:
                 post.cluster_id = int(label)
                 post.is_noise = False
-                post.cluster_strength = float(strength)
 
         return posts
 

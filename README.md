@@ -2,7 +2,7 @@
 
 A systems-oriented framework for modeling emerging narratives in dynamic information environments — grounded in situational awareness theory and designed to support analyst comprehension of large-scale, evolving social media discourse.
 
-> Associated paper: *Emerging Narrative Detection in Dynamic Information Environments* (IEEE SMC 2025) and *Modeling Narrative Emergence in Dynamic Information Environments* (IC²S² 2026).
+> Associated paper: *Emerging Narrative Detection in Dynamic Information Environments* (arXiv) and *Modeling Narrative Emergence in Dynamic Information Environments* (Submitted IC²S² 2026).
 > Interactive dashboard: [davidthfarr.github.io/sensemaking](https://davidthfarr.github.io/sensemaking/)
 
 ---
@@ -168,11 +168,14 @@ Tests cover cluster alignment logic and stance model output ranges. CUDA-depende
 If you use this code or framework, please cite:
 
 ```bibtex
-@inproceedings{farr2025narrativedetection,
-  title     = {Emerging Narrative Detection in Dynamic Information Environments},
-  author    = {Farr, David and others},
-  booktitle = {IEEE International Conference on Systems, Man, and Cybernetics (SMC)},
-  year      = {2025}
+@misc{farr2026temporalnarrativemonitoringdynamic,
+      title={Temporal Narrative Monitoring in Dynamic Information Environments}, 
+      author={David Farr and Stephen Prochaska and Jack Moody and Lynnette Hui Xian Ng and Iain Cruickshank and Kate Starbird and Jevin West},
+      year={2026},
+      eprint={2603.17617},
+      archivePrefix={arXiv},
+      primaryClass={cs.SI},
+      url={https://arxiv.org/abs/2603.17617}, 
 }
 ```
 
