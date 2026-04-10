@@ -24,7 +24,7 @@ class HDBSCANClusterer:
         self,
         min_cluster_size: int = 15,
         min_samples: int | None = None,
-        stance_weight: float = 0.1,
+        stance_weight: float = 0,
         metric: str = "euclidean",
     ):
         self.min_cluster_size = min_cluster_size
