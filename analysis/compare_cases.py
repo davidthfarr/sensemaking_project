@@ -95,14 +95,13 @@ def plot_narrative_lifecycles(data: dict[str, pd.DataFrame], out_path: Path) -> 
             .agg(birth="min", death="max")
             .reset_index()
         )
-        lifespan["n_windows"] = (
+        nw = (
             active.groupby("global_cluster_id")["window_dt"]
             .nunique()
-            .values
+            .rename("n_windows")
+            .reset_index()
         )
-        # recompute n_windows properly via merge
-        nw = active.groupby("global_cluster_id")["window_dt"].nunique().rename("n_windows")
-        lifespan = lifespan.join(nw, on="global_cluster_id")
+        lifespan = lifespan.merge(nw, on="global_cluster_id")
         lifespan = lifespan.sort_values("n_windows", ascending=False).head(20).reset_index(drop=True)
 
         # Normalize lifespan for color mapping
