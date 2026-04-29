@@ -5,7 +5,12 @@ Usage
 -----
 python scripts/run_rolling_windows.py --case iran
 python scripts/run_rolling_windows.py --case russia
-python scripts/run_rolling_windows.py --case venezuela --window-hours 24 --step-hours 6
+python scripts/run_rolling_windows.py --case venezuela
+
+Per-case defaults are set in CASE_PARAMS below. Any parameter can be
+overridden on the command line:
+
+    python scripts/run_rolling_windows.py --case russia --min-cluster-size 8
 
 Input:  data/processed/<case>/posts_repr.parquet
 Output: data/evaluated/<case>/<window_start>.parquet  (one file per window)
@@ -23,23 +28,48 @@ import pandas as pd
 from sensemaking.clustering.hdbscan import HDBSCANClusterer
 from sensemaking.data.schemas import Post
 
+# Per-case parameter defaults.
+# window_hours / step_hours are in hours; Russia uses 7d/1d windows.
+CASE_PARAMS = {
+    "venezuela": dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
+    "iran":      dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
+    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=5, min_samples=2),
+}
+
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--case", required=True, choices=["iran", "russia", "venezuela"],
-                   help="Case name — resolves input/output paths automatically")
-    p.add_argument("--window-hours", type=int, default=12,
-                   help="Rolling window size in hours")
-    p.add_argument("--step-hours", type=int, default=4,
-                   help="Step between windows in hours")
-    p.add_argument("--min-cluster-size", type=int, default=8)
-    p.add_argument("--min-samples", type=int, default=2)
-    p.add_argument("--cluster-epsilon", type=float, default=0.0)
+    p = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--case", required=True, choices=list(CASE_PARAMS),
+                   help="Case name — sets per-case defaults from CASE_PARAMS")
+    # Use None as sentinel so we can detect when the user explicitly overrides
+    p.add_argument("--window-hours",      type=int,   default=None,
+                   help="Rolling window size in hours (overrides case default)")
+    p.add_argument("--step-hours",        type=int,   default=None,
+                   help="Step between windows in hours (overrides case default)")
+    p.add_argument("--min-cluster-size",  type=int,   default=None,
+                   help="HDBSCAN min_cluster_size (overrides case default)")
+    p.add_argument("--min-samples",       type=int,   default=None,
+                   help="HDBSCAN min_samples (overrides case default)")
+    p.add_argument("--cluster-epsilon",   type=float, default=0.0)
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # Merge case defaults with any explicit CLI overrides
+    defaults = CASE_PARAMS[args.case]
+    window_hours     = args.window_hours     if args.window_hours     is not None else defaults["window_hours"]
+    step_hours       = args.step_hours       if args.step_hours       is not None else defaults["step_hours"]
+    min_cluster_size = args.min_cluster_size if args.min_cluster_size is not None else defaults["min_cluster_size"]
+    min_samples      = args.min_samples      if args.min_samples      is not None else defaults["min_samples"]
+
+    print(
+        f"Case: {args.case} | window={window_hours}h | step={step_hours}h | "
+        f"min_cluster_size={min_cluster_size} | min_samples={min_samples}"
+    )
 
     in_path    = Path("data/processed") / args.case / "posts_repr.parquet"
     output_dir = Path("data/evaluated") / args.case
@@ -55,22 +85,22 @@ def main() -> None:
     print(f"Time range: {min_time} → {max_time}")
 
     clusterer = HDBSCANClusterer(
-        min_cluster_size=args.min_cluster_size,
-        min_samples=args.min_samples,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
         cluster_selection_epsilon=args.cluster_epsilon,
     )
 
     window_start = min_time
     while window_start <= max_time:
-        window_end = window_start + timedelta(hours=args.window_hours)
+        window_end = window_start + timedelta(hours=window_hours)
 
         window_df = df[
             (df["timestamp"] >= window_start) &
             (df["timestamp"] < window_end)
         ]
 
-        if len(window_df) == 0:
-            window_start += timedelta(hours=args.step_hours)
+        if len(window_df) < min_cluster_size:
+            window_start += timedelta(hours=step_hours)
             continue
 
         posts = [
@@ -102,7 +132,7 @@ def main() -> None:
         out_path = output_dir / f"{window_start.strftime('%Y-%m-%d-%H')}.parquet"
         out_df.to_parquet(out_path, index=False)
 
-        window_start += timedelta(hours=args.step_hours)
+        window_start += timedelta(hours=step_hours)
 
     print(f"\nDone. Output written to {output_dir}/")
 
