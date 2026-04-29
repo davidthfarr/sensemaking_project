@@ -33,8 +33,13 @@ from sensemaking.data.schemas import Post
 CASE_PARAMS = {
     "venezuela": dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
     "iran":      dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
-    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=5, min_samples=2),
+    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=50, min_samples=10,
+                     cluster_selection_epsilon=0.1),
 }
+
+# If a window returns more clusters than this, double min_cluster_size and retry.
+MAX_CLUSTERS = 50
+MAX_RETRIES  = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,7 +57,7 @@ def parse_args() -> argparse.Namespace:
                    help="HDBSCAN min_cluster_size (overrides case default)")
     p.add_argument("--min-samples",       type=int,   default=None,
                    help="HDBSCAN min_samples (overrides case default)")
-    p.add_argument("--cluster-epsilon",   type=float, default=0.0)
+    p.add_argument("--cluster-epsilon",   type=float, default=None)
     return p.parse_args()
 
 
@@ -63,12 +68,14 @@ def main() -> None:
     defaults = CASE_PARAMS[args.case]
     window_hours     = args.window_hours     if args.window_hours     is not None else defaults["window_hours"]
     step_hours       = args.step_hours       if args.step_hours       is not None else defaults["step_hours"]
-    min_cluster_size = args.min_cluster_size if args.min_cluster_size is not None else defaults["min_cluster_size"]
-    min_samples      = args.min_samples      if args.min_samples      is not None else defaults["min_samples"]
+    min_cluster_size  = args.min_cluster_size if args.min_cluster_size is not None else defaults["min_cluster_size"]
+    min_samples       = args.min_samples      if args.min_samples      is not None else defaults["min_samples"]
+    cluster_epsilon   = args.cluster_epsilon  if args.cluster_epsilon  is not None else defaults.get("cluster_selection_epsilon", 0.0)
 
     print(
         f"Case: {args.case} | window={window_hours}h | step={step_hours}h | "
-        f"min_cluster_size={min_cluster_size} | min_samples={min_samples}"
+        f"min_cluster_size={min_cluster_size} | min_samples={min_samples} | "
+        f"epsilon={cluster_epsilon}"
     )
 
     in_path    = Path("data/processed") / args.case / "posts_repr.parquet"
@@ -83,12 +90,6 @@ def main() -> None:
     min_time = df["timestamp"].min().floor("h")
     max_time = df["timestamp"].max().floor("h")
     print(f"Time range: {min_time} → {max_time}")
-
-    clusterer = HDBSCANClusterer(
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples,
-        cluster_selection_epsilon=args.cluster_epsilon,
-    )
 
     window_start = min_time
     while window_start <= max_time:
@@ -113,13 +114,32 @@ def main() -> None:
             for _, row in window_df.iterrows()
         ]
 
-        posts = clusterer.fit_predict(posts)
+        # Adaptive retry: if the window produces too many clusters, double
+        # min_cluster_size and rerun up to MAX_RETRIES times.
+        attempt_mcs = min_cluster_size
+        for attempt in range(1, MAX_RETRIES + 1):
+            clusterer = HDBSCANClusterer(
+                min_cluster_size=attempt_mcs,
+                min_samples=min_samples,
+                cluster_selection_epsilon=cluster_epsilon,
+            )
+            posts = clusterer.fit_predict(posts)
+            n_clusters = len({p.cluster_id for p in posts if p.cluster_id is not None})
+            if n_clusters <= MAX_CLUSTERS or attempt == MAX_RETRIES:
+                break
+            print(
+                f"  WARNING {window_start.strftime('%Y-%m-%d %H:%M')} | "
+                f"{n_clusters} clusters > {MAX_CLUSTERS} cap — "
+                f"retrying with min_cluster_size={attempt_mcs * 2} (attempt {attempt}/{MAX_RETRIES})"
+            )
+            attempt_mcs *= 2
 
-        n_clusters = len({p.cluster_id for p in posts if p.cluster_id is not None})
         noise_frac = sum(p.is_noise for p in posts) / len(posts)
+        flag = " [capped]" if attempt_mcs > min_cluster_size else ""
         print(
             f"  {window_start.strftime('%Y-%m-%d %H:%M')} | "
-            f"posts={len(posts):4d} | clusters={n_clusters:2d} | noise={noise_frac:.2f}"
+            f"posts={len(posts):4d} | clusters={n_clusters:2d} | "
+            f"noise={noise_frac:.2f} | mcs={attempt_mcs}{flag}"
         )
 
         out_df = pd.DataFrame({
