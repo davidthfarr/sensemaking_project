@@ -27,20 +27,15 @@ from openai import OpenAI
 
 from sensemaking.data.schemas import Post
 
-_SYSTEM_PROMPT = """\
-You are an analyst summarizing narratives in social media data from conflict \
-information environments.
+_PROMPT_TEMPLATE = """\
+You are analyzing social media posts about a conflict event. \
+Here are 5 representative posts from a cluster of similar posts:
 
-Given a set of representative posts from a single narrative cluster, write a \
-concise, claim-like theme label (1–2 sentences) that captures the core \
-assertion being made across the posts.
+{posts}
 
-Requirements:
-- State the claim directly, as if it were a headline or thesis statement
-- Be specific: include the actors, location, or event if identifiable
-- Do not use hedging phrases like "Some posts suggest..." or "Users claim..."
-- Do not reference the posts themselves; state the claim as fact
-- Return only the theme string, no additional commentary\
+In 10 words or fewer, write a concise claim-like label that \
+captures the main narrative theme of this cluster. \
+Return only the label, nothing else.\
 """
 
 
@@ -117,7 +112,7 @@ class StationaryThemeLabeler:
     def __init__(
         self,
         model: str = "gpt-4o-mini",
-        n_representative: int = 10,
+        n_representative: int = 5,
         max_post_chars: int = 400,
         api_key: Optional[str] = None,
     ):
@@ -157,20 +152,17 @@ class StationaryThemeLabeler:
     # GPT call
     # ------------------------------------------------------------------
 
-    def _build_user_message(self, posts: List[Post]) -> str:
-        lines = [
+    def _build_prompt(self, posts: List[Post]) -> str:
+        lines = "\n".join(
             f"{i + 1}. {p.text[: self.max_post_chars]}"
             for i, p in enumerate(posts)
-        ]
-        return "Representative posts:\n" + "\n".join(lines)
+        )
+        return _PROMPT_TEMPLATE.format(posts=lines)
 
-    def _call_api(self, user_message: str) -> str:
+    def _call_api(self, prompt: str) -> str:
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
         )
         return response.choices[0].message.content.strip()
@@ -198,8 +190,8 @@ class StationaryThemeLabeler:
             return "Unknown narrative"
 
         representative = self._select_representative(posts)
-        user_msg = self._build_user_message(representative)
-        return self._call_api(user_msg)
+        prompt = self._build_prompt(representative)
+        return self._call_api(prompt)
 
     def assign_new_themes(
         self,
