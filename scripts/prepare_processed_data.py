@@ -1,96 +1,96 @@
-import pandas as pd
+"""
+Convert a raw case CSV to a clean processed parquet.
+
+Usage
+-----
+python scripts/prepare_processed_data.py --case iran
+python scripts/prepare_processed_data.py --case russia
+python scripts/prepare_processed_data.py --case venezuela
+
+Input:  data/<case>/*.csv       (first CSV found in the directory)
+Output: data/processed/<case>/<case>_en_clean.parquet
+"""
+
+import argparse
+import sys
 from pathlib import Path
 
-RAW_PATH = Path("data/raw/ven_cleaned.csv")        # change if needed
-OUT_PATH = Path("data/processed/venezuela/ven_en_clean.parquet")
+import pandas as pd
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument("--case", required=True, choices=["iran", "russia", "venezuela"],
+                   help="Case name — resolves input/output paths automatically")
+    return p.parse_args()
+
 
 def clean_text(text: str) -> str:
-    """Minimal, safe text cleaning."""
     if not isinstance(text, str):
         return ""
-    return (
-        text.replace("\r", " ")
-            .replace("\n", " ")
-            .strip()
-    )
+    return text.replace("\r", " ").replace("\n", " ").strip()
 
-def main():
-    print(f"Loading raw data from {RAW_PATH}")
-    df = pd.read_csv(RAW_PATH, low_memory=False)
 
+def main() -> None:
+    args = parse_args()
+
+    raw_dir = Path("data") / args.case
+    out_path = Path("data/processed") / args.case / f"{args.case}_en_clean.parquet"
+
+    # Find the first CSV in the raw directory
+    csvs = sorted(raw_dir.glob("*.csv"))
+    if not csvs:
+        sys.exit(f"No CSV files found in {raw_dir}")
+    raw_path = csvs[0]
+    if len(csvs) > 1:
+        print(f"Warning: multiple CSVs found in {raw_dir}, using {raw_path.name}")
+
+    print(f"Loading raw data from {raw_path}")
+    df = pd.read_csv(raw_path, low_memory=False)
     print(f"Initial rows: {len(df):,}")
 
     # Keep English only
-    df = df[df["language"] == "en"]
-    print(f"After language filter (en): {len(df):,}")
+    if "language" in df.columns:
+        df = df[df["language"] == "en"]
+        print(f"After language filter (en): {len(df):,}")
 
-    # Parse timestamps
-    '''df["timestamp"] = pd.to_datetime(
-        df["created_at"],
-        errors="coerce",
-        utc=True,
-    )'''
-
-    # Clean text
-    #df["text"] = df["tweet"].apply(clean_text)
-
-    # Drop invalid rows
-    df = df.dropna(subset=["timestamp"])
-    df = df[df["text"] != ""]
-
-    print(f"After dropping invalid rows: {len(df):,}")
-    # --- ID column compatibility (venezuela / brandwatch export) ---
+    # Column name normalisation
     rename_map = {}
-
-    # post id
     if "id" not in df.columns:
-        if "post_id" in df.columns:
-            rename_map["post_id"] = "id"
-        elif "Resource Id" in df.columns:
-            rename_map["Resource Id"] = "id"
-    
-    # user id
+        for candidate in ("post_id", "Resource Id"):
+            if candidate in df.columns:
+                rename_map[candidate] = "id"
+                break
     if "user_id" not in df.columns:
-        if "author_id" in df.columns:
-            rename_map["author_id"] = "user_id"
-        elif "Author" in df.columns:
-            rename_map["Author"] = "user_id"
-        elif "X Author ID" in df.columns:
-            rename_map["X Author ID"] = "user_id"
-    
+        for candidate in ("author_id", "Author", "X Author ID"):
+            if candidate in df.columns:
+                rename_map[candidate] = "user_id"
+                break
     if rename_map:
         df = df.rename(columns=rename_map)
-    
-    missing = [c for c in ["id", "user_id"] if c not in df.columns]
+
+    missing = [c for c in ("id", "user_id", "timestamp", "text") if c not in df.columns]
     if missing:
-        raise KeyError(f"Still missing required columns: {missing}. Available: {df.columns.tolist()}")
+        sys.exit(f"Missing required columns after normalisation: {missing}\n"
+                 f"Available: {df.columns.tolist()}")
 
-    # Select canonical processed columns
-    
-    df_processed = df[
-        [
-            "id",
-            "user_id",
-            "timestamp",
-            "text",
-            "language",
-        ]
-    ].rename(
-        columns={
-            "id": "post_id",
-        }
-    )
+    # Parse timestamps if not already datetime
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+    df["text"] = df["text"].apply(clean_text)
 
-    # Ensure string IDs
-    df_processed["post_id"] = df_processed["post_id"].astype(str)
-    df_processed["user_id"] = df_processed["user_id"].astype(str)
+    df = df.dropna(subset=["timestamp"])
+    df = df[df["text"] != ""]
+    print(f"After dropping invalid rows: {len(df):,}")
 
-    # Write to processed
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df_processed.to_parquet(OUT_PATH, index=False)
+    df_out = df[["id", "user_id", "timestamp", "text"]].rename(columns={"id": "post_id"})
+    df_out["post_id"] = df_out["post_id"].astype(str)
+    df_out["user_id"] = df_out["user_id"].astype(str)
 
-    print(f"Processed data written to {OUT_PATH}")
-    print(df_processed.head())
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df_out.to_parquet(out_path, index=False)
+    print(f"Written → {out_path} ({len(df_out):,} rows)")
+    print(df_out.head())
+
 
 if __name__ == "__main__":
     main()
