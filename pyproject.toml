@@ -14,6 +14,12 @@ dependencies = [
     "numpy",
     "tqdm",
     "openai>=1.0",
+    "pandas",
+    "pyarrow",
+    "hdbscan",
+    "scikit-learn",
+    "scipy",
+    "matplotlib",
 ]
 
 [tool.setuptools.packages.find]
