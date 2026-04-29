@@ -17,7 +17,6 @@ STEP_DAYS = 4
 
 MIN_CLUSTER_SIZE = 8
 MIN_SAMPLES = 2
-STANCE_WEIGHT = 0.05
 CLUSTER_SELECTION_EPSILON = 0.0  # raise to merge fragmented sub-clusters (0.1–0.5)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,7 +41,6 @@ max_time = df["timestamp"].max().floor("H")
 clusterer = HDBSCANClusterer(
     min_cluster_size=MIN_CLUSTER_SIZE,
     min_samples=MIN_SAMPLES,
-    stance_weight=STANCE_WEIGHT,
     cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
 )
 
@@ -71,7 +69,6 @@ while window_start <= max_time:
             timestamp=row.timestamp,
             text=row.text,
             embedding=row.embedding,
-            stance=row.stance,
         )
         for _, row in window_df.iterrows()
     ]

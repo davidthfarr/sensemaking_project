@@ -1,6 +1,5 @@
 import pandas as pd
 from sensemaking.embeddings.encoder import EmbeddingEncoder
-from sensemaking.embeddings.stance import ZeroShotStanceLabeler
 from sensemaking.data.schemas import Post
 
 # Load cleaned / filtered data
@@ -16,12 +15,10 @@ posts = [
     for _, row in df.iterrows()
 ]
 
-# Encode + stance ONCE
+# Encode embeddings ONCE
 encoder = EmbeddingEncoder(require_cuda=True)
-stance = ZeroShotStanceLabeler(require_cuda=True)
 
 posts = encoder(posts)
-posts = stance(posts)
 
 # Persist representation
 out = pd.DataFrame({
@@ -30,7 +27,6 @@ out = pd.DataFrame({
     "timestamp": [p.timestamp for p in posts],
     "text": [p.text for p in posts],
     "embedding": [p.embedding for p in posts],
-    "stance": [p.stance for p in posts],
 })
 
 out.to_parquet("data/processed/posts_repr.parquet", index=False)

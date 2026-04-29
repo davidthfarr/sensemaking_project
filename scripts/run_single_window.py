@@ -5,7 +5,6 @@ from datetime import timedelta
 
 from sensemaking.data.schemas import Post
 from sensemaking.embeddings.encoder import EmbeddingEncoder
-from sensemaking.embeddings.stance import ZeroShotStanceLabeler
 from sensemaking.clustering.hdbscan import HDBSCANClusterer
 
 # =====================
@@ -21,13 +20,11 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # =====================
 
 WINDOW_DAYS = 7
-STANCE_WEIGHT = 0.1
 MIN_CLUSTER_SIZE = 20
 MIN_SAMPLES = 5
 CLUSTER_SELECTION_EPSILON = 0.0  # raise to merge fragmented sub-clusters (0.1–0.5)
 
 EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"
-STANCE_MODEL = "facebook/bart-large-mnli"
 
 DEVICE = "cuda"  # change to "cpu" if needed
 
@@ -71,20 +68,6 @@ encoder = EmbeddingEncoder(
 posts = encoder(posts)
 
 # =====================
-# Stance
-# =====================
-
-print("Computing stance labels...")
-stance_labeler = ZeroShotStanceLabeler(
-    model_name=STANCE_MODEL,
-    device=DEVICE,
-    batch_size=32,
-)
-
-posts = stance_labeler(posts)
-
-
-# =====================
 # Select a single time window
 # =====================
 
@@ -106,7 +89,6 @@ print("Running HDBSCAN...")
 clusterer = HDBSCANClusterer(
     min_cluster_size=MIN_CLUSTER_SIZE,
     min_samples=MIN_SAMPLES,
-    stance_weight=STANCE_WEIGHT,
     cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
 )
 
@@ -122,7 +104,6 @@ df_eval = pd.DataFrame(
         "user_id": [p.user_id for p in window_posts],
         "timestamp": [p.timestamp for p in window_posts],
         "text": [p.text for p in window_posts],
-        "stance": [p.stance for p in window_posts],
         "cluster_id": [p.cluster_id for p in window_posts],
         "is_noise": [p.is_noise for p in window_posts],
     }
