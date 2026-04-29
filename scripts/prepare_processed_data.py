@@ -46,7 +46,7 @@ def main() -> None:
         print(f"Warning: multiple CSVs found in {raw_dir}, using {raw_path.name}")
 
     print(f"Loading raw data from {raw_path}")
-    df = pd.read_csv(raw_path, low_memory=False)
+    df = pd.read_csv(raw_path, engine="python", on_bad_lines="skip")
     print(f"Initial rows: {len(df):,}")
 
     # Keep English only
