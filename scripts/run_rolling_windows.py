@@ -33,8 +33,8 @@ from sensemaking.data.schemas import Post
 CASE_PARAMS = {
     "venezuela": dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
     "iran":      dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
-    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=50, min_samples=10,
-                     cluster_selection_epsilon=0.1),
+    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=5, min_samples=10,
+                     cluster_selection_epsilon=0.15),
 }
 
 # If a window returns more clusters than this, double min_cluster_size and retry.
@@ -114,9 +114,9 @@ def main() -> None:
             for _, row in window_df.iterrows()
         ]
 
-        # Adaptive retry: if the window produces too many clusters, double
-        # min_cluster_size and rerun up to MAX_RETRIES times.
-        attempt_mcs = min_cluster_size
+        # Base min_cluster_size scales with window density: 1 per 50 posts, floor 5.
+        # Adaptive retry doubles it if the window still produces too many clusters.
+        attempt_mcs = max(5, len(posts) // 50)
         for attempt in range(1, MAX_RETRIES + 1):
             clusterer = HDBSCANClusterer(
                 min_cluster_size=attempt_mcs,
@@ -135,7 +135,8 @@ def main() -> None:
             attempt_mcs *= 2
 
         noise_frac = sum(p.is_noise for p in posts) / len(posts)
-        flag = " [capped]" if attempt_mcs > min_cluster_size else ""
+        base_mcs = max(5, len(posts) // 50)
+        flag = " [capped]" if attempt_mcs > base_mcs else ""
         print(
             f"  {window_start.strftime('%Y-%m-%d %H:%M')} | "
             f"posts={len(posts):4d} | clusters={n_clusters:2d} | "
