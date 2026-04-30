@@ -1,5 +1,3 @@
-# Jupyter
-.ipynb_checkpoints/
 # data artifacts
 data/*.parquet
 data/*.csv
@@ -7,10 +5,12 @@ data/processed
 data/evaluated
 data/raw
 data/figures
+data/cleaned
 *.html
 
 # Jupyter
 .ipynb_checkpoints/
+
 # Secrets
 .env
 *.key
@@ -19,27 +19,10 @@ data/figures
 *.secrets
 environment.json
 
-# Jupyter
-.ipynb_checkpoints/
-
 # Python
 __pycache__/
 .venv/
 venv/
-
-# Secrets
-.env
-*.key
-*.pem
-*.token
-*.secrets
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Python
-__pycache__/
-.venv/
 
 # Mac usage
 .DS_Store
