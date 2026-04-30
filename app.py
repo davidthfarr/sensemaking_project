@@ -40,8 +40,8 @@ import plotly.graph_objects as go
 # -------------------------
 # Paths / Config
 # -------------------------
-REP_PATH = Path("data/processed/posts_repr.parquet")
-EVAL_DIR = Path("data/evaluated/daily")
+REP_PATH = Path("data/processed/posts_repr_ck_with_top_level_replies.parquet")
+EVAL_DIR = Path("data/evaluated/hourly")
 
 # UI / preprocessing knobs
 TOP_K_REP = 5                 # representative tweets per cluster
