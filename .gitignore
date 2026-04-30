@@ -16,6 +16,7 @@ data/figures
 *.pem
 *.token
 *.secrets
+environment.json
 
 # Jupyter
 .ipynb_checkpoints/
