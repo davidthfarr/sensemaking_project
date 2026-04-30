@@ -1,5 +1,5 @@
 """
-Post-hoc GPT stance classification — two modes.
+Post-hoc stance classification — two modes, three backends.
 
 cluster mode (default)
   Classify every post against its own cluster's stationary theme.
@@ -17,11 +17,18 @@ topic mode
             window, n_posts, support_pct, oppose_pct, neutral_pct
   Resume-safe: skips post_ids already present in the output file.
 
+Backends (--model):
+  gpt-4o-mini   OpenAI gpt-4o-mini  (default; requires OPENAI_API_KEY)
+  gpt-4o        OpenAI gpt-4o       (requires OPENAI_API_KEY)
+  llama         meta-llama/Meta-Llama-3-8B-Instruct loaded locally via
+                transformers (requires HF access; uses --device)
+
 Usage
 -----
 python scripts/run_stance_classification.py --case iran
 python scripts/run_stance_classification.py --case russia --mode topic
-python scripts/run_stance_classification.py --case venezuela --mode cluster --batch-size 30
+python scripts/run_stance_classification.py --case venezuela --model llama --device cuda
+python scripts/run_stance_classification.py --case iran --model gpt-4o --batch-size 30
 
 Input (both modes):
   data/evaluated/<case>/global_clusters.parquet
@@ -32,7 +39,7 @@ Additional input (cluster mode only):
 
 Log: logs/<case>_stance_<mode>.log
 
-Requires OPENAI_API_KEY in .env or the environment.
+OPENAI_API_KEY (from .env) required only for gpt-4o-mini / gpt-4o backends.
 """
 
 import argparse
@@ -40,16 +47,19 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Union
 
 import pandas as pd
 from dotenv import load_dotenv
-from openai import OpenAI, RateLimitError
 
 from sensemaking.data.schemas import Post
-from sensemaking.stance.posthoc_gpt import PosthocGPTStanceClassifier
+from sensemaking.stance.posthoc_gpt import (
+    LocalLlamaClassifier,
+    PosthocGPTStanceClassifier,
+)
 
 # ---------------------------------------------------------------------------
-# Case-level topic claims for topic mode
+# Case-level topic claims
 # ---------------------------------------------------------------------------
 
 TOPIC_CLAIMS = {
@@ -58,13 +68,10 @@ TOPIC_CLAIMS = {
     "russia":    "Russia's invasion of Ukraine is justified.",
 }
 
-_TOPIC_SYSTEM = (
-    "You are a stance classifier. "
-    "Reply with exactly one word: SUPPORT, OPPOSE, or NEUTRAL."
-)
-
 MIN_POSTS_PER_CLUSTER = 3
 SLEEP_BETWEEN_BATCHES = 1.0
+
+StanceClassifier = Union[PosthocGPTStanceClassifier, LocalLlamaClassifier]
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +85,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--case", required=True, choices=list(TOPIC_CLAIMS))
     p.add_argument("--mode", choices=["cluster", "topic"], default="cluster",
                    help="cluster: per-cluster theme; topic: fixed case-level claim")
-    p.add_argument("--model", default="gpt-4o-mini")
-    p.add_argument("--batch-size", type=int, default=20,
-                   help="Posts per GPT call (cluster mode) or topic classification chunk")
+    p.add_argument("--model", choices=["gpt-4o-mini", "gpt-4o", "llama"],
+                   default="gpt-4o-mini",
+                   help="gpt-4o-mini / gpt-4o: OpenAI API; llama: local inference")
+    p.add_argument("--device", default="cuda",
+                   help="Compute device for llama backend (cuda or cpu)")
+    p.add_argument("--batch-size", type=int, default=None,
+                   help="Posts per call (default: 20 for GPT, 16 for llama)")
     p.add_argument("--min-posts", type=int, default=MIN_POSTS_PER_CLUSTER,
                    help="(cluster mode) skip clusters with fewer posts than this")
     p.add_argument("--sleep", type=float, default=SLEEP_BETWEEN_BATCHES,
-                   help="Seconds to sleep between API calls")
+                   help="Seconds to sleep between API calls (GPT only; 0 to disable)")
     return p.parse_args()
 
 
@@ -117,16 +128,34 @@ def setup_logging(case: str, mode: str, log_dir: Path) -> logging.Logger:
 
 
 # ---------------------------------------------------------------------------
-# Shared data loading
+# Classifier factory
 # ---------------------------------------------------------------------------
 
-def load_gc(gc_path: Path, noise_only: bool = False) -> pd.DataFrame:
+def build_classifier(args: argparse.Namespace, log: logging.Logger) -> StanceClassifier:
+    if args.model == "llama":
+        log.info("Loading LocalLlamaClassifier (device=%s)…", args.device)
+        batch_size = args.batch_size if args.batch_size is not None else 16
+        clf = LocalLlamaClassifier(device=args.device, batch_size=batch_size)
+        log.info("  Loaded on %s", clf.device)
+        return clf
+
+    # GPT backends
+    batch_size = args.batch_size if args.batch_size is not None else 20
+    log.info("Using PosthocGPTStanceClassifier (model=%s, batch_size=%d)",
+             args.model, batch_size)
+    return PosthocGPTStanceClassifier(model=args.model, batch_size=batch_size)
+
+
+# ---------------------------------------------------------------------------
+# Shared data loading helpers
+# ---------------------------------------------------------------------------
+
+def load_gc_nonoise(gc_path: Path) -> pd.DataFrame:
     df = pd.read_parquet(gc_path)
     df["post_id"] = df["post_id"].astype(str)
     df["is_noise"] = df["is_noise"].astype(bool)
-    if not noise_only:
-        df = df[~df["is_noise"] & df["global_cluster_id"].notna()].copy()
-    df["global_cluster_id"] = pd.to_numeric(df["global_cluster_id"], errors="coerce")
+    df = df[~df["is_noise"] & df["global_cluster_id"].notna()].copy()
+    df["global_cluster_id"] = df["global_cluster_id"].astype(int)
     return df
 
 
@@ -136,11 +165,19 @@ def load_text_map(repr_path: Path) -> dict[str, str]:
     return dict(zip(df["post_id"], df["text"]))
 
 
+def is_gpt(args: argparse.Namespace) -> bool:
+    return args.model in ("gpt-4o-mini", "gpt-4o")
+
+
 # ---------------------------------------------------------------------------
 # Cluster mode
 # ---------------------------------------------------------------------------
 
-def run_cluster_mode(args: argparse.Namespace, log: logging.Logger) -> None:
+def run_cluster_mode(
+    args: argparse.Namespace,
+    classifier: StanceClassifier,
+    log: logging.Logger,
+) -> None:
     eval_dir    = Path("data/evaluated") / args.case
     repr_path   = Path("data/processed") / args.case / "posts_repr.parquet"
     gc_path     = eval_dir / "global_clusters.parquet"
@@ -148,8 +185,7 @@ def run_cluster_mode(args: argparse.Namespace, log: logging.Logger) -> None:
     out_path    = eval_dir / "cluster_stance.parquet"
 
     log.info("Loading global clusters from %s", gc_path)
-    gc_df = load_gc(gc_path)
-    gc_df["global_cluster_id"] = gc_df["global_cluster_id"].astype(int)
+    gc_df = load_gc_nonoise(gc_path)
     gc_df = gc_df.drop_duplicates(subset=["post_id", "global_cluster_id"])
     log.info("  %d unique (post, cluster) pairs", len(gc_df))
 
@@ -196,7 +232,6 @@ def run_cluster_mode(args: argparse.Namespace, log: logging.Logger) -> None:
         log.info("Nothing to classify — exiting.")
         return
 
-    classifier = PosthocGPTStanceClassifier(model=args.model, batch_size=args.batch_size)
     new_rows: list[dict] = []
 
     for i, cid in enumerate(cluster_ids, 1):
@@ -215,7 +250,8 @@ def run_cluster_mode(args: argparse.Namespace, log: logging.Logger) -> None:
                 p.stance = "neutral"
 
         counts = {s: sum(p.stance == s for p in posts) for s in ("support", "oppose", "neutral")}
-        log.debug("  support=%d oppose=%d neutral=%d", counts["support"], counts["oppose"], counts["neutral"])
+        log.debug("  support=%d oppose=%d neutral=%d",
+                  counts["support"], counts["oppose"], counts["neutral"])
 
         for p in posts:
             new_rows.append({
@@ -225,7 +261,7 @@ def run_cluster_mode(args: argparse.Namespace, log: logging.Logger) -> None:
                 "stance":            p.stance,
             })
 
-        if args.sleep > 0 and i < len(cluster_ids):
+        if is_gpt(args) and args.sleep > 0 and i < len(cluster_ids):
             time.sleep(args.sleep)
 
     all_rows = existing_rows + new_rows
@@ -245,94 +281,11 @@ def run_cluster_mode(args: argparse.Namespace, log: logging.Logger) -> None:
 # Topic mode
 # ---------------------------------------------------------------------------
 
-def _topic_prompt(text: str, claim: str) -> str:
-    return (
-        f"Does this post SUPPORT, OPPOSE, or take a NEUTRAL stance toward "
-        f"the following claim: '{claim}'?\n"
-        f"Reply with exactly one word: SUPPORT, OPPOSE, or NEUTRAL.\n\n"
-        f"Post: {text[:500]}"
-    )
-
-
-def _classify_topic_single(client: OpenAI, model: str, text: str, claim: str,
-                            max_retries: int = 3, retry_delay: float = 5.0) -> str:
-    prompt = _topic_prompt(text, claim)
-    for attempt in range(max_retries):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _TOPIC_SYSTEM},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=0.0,
-                max_tokens=5,
-            )
-            word = resp.choices[0].message.content.strip().lower()
-            if word in ("support", "oppose", "neutral"):
-                return word
-            # Try to salvage a partial match
-            for label in ("support", "oppose", "neutral"):
-                if label in word:
-                    return label
-        except RateLimitError:
-            time.sleep(retry_delay * (attempt + 1))
-        except Exception:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(retry_delay)
-    return "neutral"
-
-
-def _classify_topic_batch(client: OpenAI, model: str, texts: list[str], claim: str,
-                           max_retries: int = 3, retry_delay: float = 5.0) -> list[str]:
-    """
-    Classify a batch via a JSON-array call; fall back to per-post if it fails.
-    Uses the same prompt framing as the single-post variant but batched.
-    """
-    numbered = "\n".join(f"{i + 1}. {t[:400]}" for i, t in enumerate(texts))
-    batch_prompt = (
-        f"For each post below, does it SUPPORT, OPPOSE, or take a NEUTRAL stance "
-        f"toward the following claim: '{claim}'?\n"
-        f"Reply with a JSON object: {{\"stances\": [\"SUPPORT\", \"OPPOSE\", ...]}}\n"
-        f"One label per post, in order. Use only SUPPORT, OPPOSE, or NEUTRAL.\n\n"
-        f"Posts:\n{numbered}"
-    )
-
-    import json
-
-    for attempt in range(max_retries):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _TOPIC_SYSTEM},
-                    {"role": "user",   "content": batch_prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.0,
-            )
-            data = json.loads(resp.choices[0].message.content)
-            labels = data.get("stances", [])
-            normalized = [str(l).lower().strip() for l in labels]
-            if (len(normalized) == len(texts) and
-                    all(l in ("support", "oppose", "neutral") for l in normalized)):
-                return normalized
-        except RateLimitError:
-            time.sleep(retry_delay * (attempt + 1))
-        except Exception:
-            if attempt == max_retries - 1:
-                break
-            time.sleep(retry_delay)
-
-    # Fallback: classify one at a time
-    return [
-        _classify_topic_single(client, model, t, claim, max_retries, retry_delay)
-        for t in texts
-    ]
-
-
-def run_topic_mode(args: argparse.Namespace, log: logging.Logger) -> None:
+def run_topic_mode(
+    args: argparse.Namespace,
+    classifier: StanceClassifier,
+    log: logging.Logger,
+) -> None:
     claim = TOPIC_CLAIMS[args.case]
     log.info("Topic claim: %s", claim)
 
@@ -354,80 +307,74 @@ def run_topic_mode(args: argparse.Namespace, log: logging.Logger) -> None:
     log.info("  %d posts with text", len(text_map))
 
     # Resume: skip post_ids already classified
-    already_done: set[str] = set()
-    existing_rows: list[dict] = []
+    existing_stance_map: dict[str, str] = {}
     if out_path.exists():
         existing_df = pd.read_parquet(out_path)
-        already_done = set(existing_df["post_id"].astype(str).tolist())
-        existing_rows = existing_df.to_dict("records")
-        log.info("Resuming: %d post_ids already classified", len(already_done))
+        existing_stance_map = dict(
+            zip(existing_df["post_id"].astype(str), existing_df["stance"])
+        )
+        log.info("Resuming: %d post_ids already classified", len(existing_stance_map))
 
-    # Unique post_ids to classify
     all_post_ids = gc_df["post_id"].unique().tolist()
-    todo_ids = [pid for pid in all_post_ids if pid not in already_done]
+    todo_ids = [pid for pid in all_post_ids if pid not in existing_stance_map]
     log.info("%d unique posts to classify (%d already done)",
-             len(todo_ids), len(already_done))
+             len(todo_ids), len(existing_stance_map))
 
-    if not todo_ids:
-        log.info("Nothing to classify — skipping to aggregation.")
-        stance_map: dict[str, str] = {}
-        if out_path.exists():
-            existing_df = pd.read_parquet(out_path)
-            stance_map = dict(zip(existing_df["post_id"].astype(str), existing_df["stance"]))
-    else:
-        client = OpenAI()
-        new_stances: dict[str, str] = {}
+    new_stances: dict[str, str] = {}
 
-        total_batches = (len(todo_ids) + args.batch_size - 1) // args.batch_size
-        for b_idx, start in enumerate(range(0, len(todo_ids), args.batch_size), 1):
-            batch_ids = todo_ids[start: start + args.batch_size]
-            batch_texts = [text_map.get(pid, "") for pid in batch_ids]
+    if todo_ids:
+        # Build Post objects and classify in one pass using the classifier's
+        # internal batching — pass the topic claim as the theme.
+        batch_size = classifier.batch_size
+        total_batches = (len(todo_ids) + batch_size - 1) // batch_size
+
+        for b_idx, start in enumerate(range(0, len(todo_ids), batch_size), 1):
+            batch_ids = todo_ids[start: start + batch_size]
+            batch_posts = [
+                Post(post_id=pid, text=text_map.get(pid, ""))
+                for pid in batch_ids
+            ]
 
             log.info("[batch %d/%d] %d posts", b_idx, total_batches, len(batch_ids))
 
             try:
-                labels = _classify_topic_batch(client, args.model, batch_texts, claim)
+                # Pass claim as theme — both classifiers treat this identically
+                classified = classifier.classify_posts(batch_posts, claim)
             except Exception as exc:
                 log.error("  batch %d failed: %s — marking all neutral", b_idx, exc)
-                labels = ["neutral"] * len(batch_ids)
+                classified = batch_posts
+                for p in classified:
+                    p.stance = "neutral"
 
-            for pid, label in zip(batch_ids, labels):
-                new_stances[pid] = label
+            for p in classified:
+                new_stances[p.post_id] = p.stance or "neutral"
 
-            counts = {s: labels.count(s) for s in ("support", "oppose", "neutral")}
+            counts = {s: sum(p.stance == s for p in classified)
+                      for s in ("support", "oppose", "neutral")}
             log.debug("  support=%d oppose=%d neutral=%d",
                       counts["support"], counts["oppose"], counts["neutral"])
 
-            if args.sleep > 0 and start + args.batch_size < len(todo_ids):
+            if is_gpt(args) and args.sleep > 0 and start + batch_size < len(todo_ids):
                 time.sleep(args.sleep)
 
-        # Merge with existing classified posts
-        existing_stance_map: dict[str, str] = {}
-        if existing_rows:
-            existing_stance_map = {
-                r["post_id"]: r["stance"] for r in existing_rows
-            }
-        stance_map = {**existing_stance_map, **new_stances}
+    stance_map = {**existing_stance_map, **new_stances}
 
-    # Fan out: one row per (post_id, window) row in global_clusters
-    out_rows = []
-    for row in gc_df.itertuples(index=False):
-        pid = row.post_id
-        gid = getattr(row, "global_cluster_id", None)
-        window = row.window
-        stance = stance_map.get(pid, "neutral")
-        out_rows.append({
-            "post_id":           pid,
-            "global_cluster_id": gid,
-            "window":            window,
-            "stance":            stance,
-        })
+    # Fan out to all (post_id, window) rows
+    out_rows = [
+        {
+            "post_id":           row.post_id,
+            "global_cluster_id": getattr(row, "global_cluster_id", None),
+            "window":            row.window,
+            "stance":            stance_map.get(row.post_id, "neutral"),
+        }
+        for row in gc_df.itertuples(index=False)
+    ]
 
     df_out = pd.DataFrame(out_rows)
     df_out.to_parquet(out_path, index=False)
     log.info("Written %d rows → %s", len(df_out), out_path)
 
-    # ------------------------------------------------- per-window aggregates
+    # Per-window aggregates
     agg_rows = []
     for window, wdf in df_out.groupby("window"):
         n = len(wdf)
@@ -462,17 +409,26 @@ def run_topic_mode(args: argparse.Namespace, log: logging.Logger) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    # Load .env unconditionally — harmless if absent; required for GPT backends
     load_dotenv()
     args = parse_args()
 
     log = setup_logging(args.case, args.mode, Path("logs"))
-    log.info("=== Stance classification: case=%s  mode=%s ===", args.case, args.mode)
-    log.info("model=%s  batch_size=%d", args.model, args.batch_size)
+    log.info("=== Stance classification: case=%s  mode=%s  model=%s ===",
+             args.case, args.mode, args.model)
+
+    if is_gpt(args):
+        import os
+        if not os.environ.get("OPENAI_API_KEY"):
+            log.error("OPENAI_API_KEY not set — required for model '%s'", args.model)
+            sys.exit(1)
+
+    classifier = build_classifier(args, log)
 
     if args.mode == "cluster":
-        run_cluster_mode(args, log)
+        run_cluster_mode(args, classifier, log)
     else:
-        run_topic_mode(args, log)
+        run_topic_mode(args, classifier, log)
 
 
 if __name__ == "__main__":
