@@ -46,8 +46,12 @@ import argparse
 import logging
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Union
+
+warnings.filterwarnings("ignore", message=".*max_new_tokens.*max_length.*")
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 import pandas as pd
 from dotenv import load_dotenv

@@ -186,6 +186,8 @@ class PosthocGPTStanceClassifier:
         for start in tqdm(
             range(0, len(posts), self.batch_size),
             desc="GPT stance",
+            position=0,
+            leave=True,
         ):
             batch = posts[start: start + self.batch_size]
             labels = self._classify_batch([p.text for p in batch], theme)
@@ -321,6 +323,8 @@ class LocalLlamaClassifier:
         for start in tqdm(
             range(0, len(posts), self.batch_size),
             desc="Llama stance",
+            position=0,
+            leave=True,
         ):
             batch = posts[start: start + self.batch_size]
             labels = self._classify_batch([p.text for p in batch], theme)
