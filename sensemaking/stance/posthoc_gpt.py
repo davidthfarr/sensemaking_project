@@ -283,7 +283,6 @@ class LocalLlamaClassifier:
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=1024,
         ).to(self.model.device)
 
         input_len = inputs["input_ids"].shape[1]
