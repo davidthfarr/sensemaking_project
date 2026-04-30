@@ -1,0 +1,6 @@
+{
+    "raw_filepath": "path/to/raw/file",
+    "cleaned_filepath": "path/to/text/cleaned/file",
+    "processed_filepath": "path/to/built/representations",
+    "evaluated_dir": "directory/with/windows/cluster/data"
+}
