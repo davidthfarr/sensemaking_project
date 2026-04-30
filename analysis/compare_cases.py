@@ -1,21 +1,24 @@
 """
 Cross-case comparison plots using global_clusters.parquet + cluster_themes.parquet.
 
-Produces six figures saved to analysis/figures/:
+Produces seven figures saved to analysis/figures/:
   1. narrative_lifecycles.png       — per-case subplot, top-20 clusters as horizontal bars, Y axis = theme label
   2. noise_over_time.png            — noise fraction vs. normalized time, all cases overlaid
   3. cluster_count_over_time.png    — active cluster count vs. normalized time, all cases overlaid
   4. lifespan_distribution.png      — KDE/histogram of lifespan in windows, log x axis
   5. top_narratives_per_case.png    — bar chart top-15 clusters by lifespan, Y axis = theme label
   6. narrative_birth_death_rate.png — birth and death event counts per window, normalized time
+  7. stance_over_time.png           — stacked area of support/neutral/oppose vs. real dates, per case
 
 Usage
 -----
 python analysis/compare_cases.py
 
-Missing global_clusters.parquet or cluster_themes.parquet for any case is handled gracefully.
+Missing global_clusters.parquet, cluster_themes.parquet, or
+topic_stance_by_window.parquet for any case is handled gracefully.
 """
 
+import matplotlib.dates as mdates
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -27,9 +30,18 @@ from scipy.stats import gaussian_kde
 
 CASES = ["venezuela", "iran", "russia"]
 COLORS = {"venezuela": "#2166ac", "iran": "#1a9641", "russia": "#d73027"}
+# Darker shades of each case color for the OPPOSE band
+OPPOSE_COLORS = {"venezuela": "#053061", "iran": "#00441b", "russia": "#67000d"}
 FIGURES_DIR = Path("analysis/figures")
 
 LABEL_MAX_CHARS = 50
+
+# Fixed topic claims (mirrors TOPIC_CLAIMS in run_stance_classification.py)
+TOPIC_CLAIMS = {
+    "venezuela": "The U.S. capture of Maduro was justified.",
+    "iran":      "U.S. military action against Iran is justified.",
+    "russia":    "Russia's invasion of Ukraine is justified.",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +425,104 @@ def plot_birth_death_rate(data: dict[str, pd.DataFrame], out_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
+# Plot 7: Stance over time (stacked area, real dates)
+# ---------------------------------------------------------------------------
+
+def plot_stance_over_time(out_path: Path) -> None:
+    """
+    Stacked area chart of support / neutral / oppose proportions over real
+    calendar time, one subplot per case.  Reads topic_stance_by_window.parquet;
+    skips cases where that file is absent.
+    """
+    available = []
+    for case in CASES:
+        p = Path("data/evaluated") / case / "topic_stance_by_window.parquet"
+        if p.exists():
+            available.append(case)
+        else:
+            print(f"  [stance_over_time] skip {case}: topic_stance_by_window.parquet not found")
+
+    if not available:
+        print("  [stance_over_time] no data available — skipping plot")
+        return
+
+    n = len(available)
+    fig, axes = plt.subplots(n, 1, figsize=(13, 4 * n), squeeze=False)
+
+    for ax, case in zip(axes[:, 0], available):
+        color        = COLORS[case]
+        oppose_color = OPPOSE_COLORS[case]
+        claim        = TOPIC_CLAIMS.get(case, "")
+
+        path = Path("data/evaluated") / case / "topic_stance_by_window.parquet"
+        df = pd.read_parquet(path)
+
+        # Parse window string ("YYYY-MM-DD-HH") to datetime
+        df["window_dt"] = pd.to_datetime(
+            df["window"], format="%Y-%m-%d-%H", utc=True, errors="coerce"
+        )
+        df = df.dropna(subset=["window_dt"]).sort_values("window_dt").reset_index(drop=True)
+
+        if df.empty:
+            ax.set_visible(False)
+            continue
+
+        # Rolling smooth (window=3, centred, min_periods=1)
+        smooth = (
+            df[["support_pct", "neutral_pct", "oppose_pct"]]
+            .rolling(3, min_periods=1, center=True)
+            .mean()
+        )
+        support = smooth["support_pct"].values * 100
+        neutral = smooth["neutral_pct"].values * 100
+        oppose  = smooth["oppose_pct"].values * 100
+
+        dates = df["window_dt"].dt.to_pydatetime()
+
+        ax.stackplot(
+            dates,
+            support,
+            neutral,
+            oppose,
+            labels=["Support", "Neutral", "Oppose"],
+            colors=[color, "#aaaaaa", oppose_color],
+            alpha=0.85,
+        )
+
+        # 50 % reference line
+        ax.axhline(50, color="white", linewidth=0.9, linestyle="--", alpha=0.7)
+
+        ax.set_ylim(0, 100)
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter())
+        ax.set_ylabel("Share of posts (%)", fontsize=9)
+
+        # X axis: real dates with auto-locating ticks
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(
+            mdates.AutoDateLocator()
+        ))
+        ax.set_xlim(dates[0], dates[-1])
+
+        title = f"{case.capitalize()}"
+        if claim:
+            title += f'\n"{claim}"'
+        ax.set_title(title, fontsize=10, fontweight="bold", loc="left")
+
+        ax.legend(
+            loc="upper right", fontsize=8,
+            framealpha=0.6, ncol=3,
+        )
+        ax.grid(True, axis="y", alpha=0.25)
+
+    axes[-1, 0].set_xlabel("Date", fontsize=10)
+    fig.suptitle("Stance Toward Topic Claim Over Time", fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    print(f"Saved → {out_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -434,6 +544,7 @@ def main() -> None:
     plot_lifespan_distribution(data, FIGURES_DIR / "lifespan_distribution.png")
     plot_top_narratives(data, FIGURES_DIR / "top_narratives_per_case.png")
     plot_birth_death_rate(data, FIGURES_DIR / "narrative_birth_death_rate.png")
+    plot_stance_over_time(FIGURES_DIR / "stance_over_time.png")
 
     print("\nAll figures written to", FIGURES_DIR)
 
