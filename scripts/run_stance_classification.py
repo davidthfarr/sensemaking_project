@@ -133,10 +133,9 @@ def setup_logging(case: str, mode: str, log_dir: Path) -> logging.Logger:
 
 def build_classifier(args: argparse.Namespace, log: logging.Logger) -> StanceClassifier:
     if args.model == "llama":
-        log.info("Loading LocalLlamaClassifier (device=%s)…", args.device)
-        batch_size = args.batch_size if args.batch_size is not None else 16
-        clf = LocalLlamaClassifier(device=args.device, batch_size=batch_size)
-        log.info("  Loaded on %s", clf.device)
+        batch_size = args.batch_size if args.batch_size is not None else 32
+        log.info("Loading LocalLlamaClassifier (device_map=auto, batch_size=%d)…", batch_size)
+        clf = LocalLlamaClassifier(batch_size=batch_size)
         return clf
 
     # GPT backends

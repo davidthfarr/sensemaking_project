@@ -209,12 +209,14 @@ class LocalLlamaClassifier:
     Requires HuggingFace access to meta-llama/Meta-Llama-3-8B-Instruct:
       huggingface-cli login
 
+    The model is loaded with device_map="auto" so transformers automatically
+    shards it across all available GPUs (or falls back to CPU if none).
+    float16 is used to reduce memory footprint and speed up inference.
+
     Parameters
     ----------
-    device : str
-        "cuda" or "cpu". Falls back to CPU automatically if CUDA is unavailable.
     batch_size : int
-        Prompts processed per forward pass. 16 fits comfortably on a 24 GB GPU.
+        Prompts processed per forward pass. 32 works well across two GPUs.
     """
 
     MODEL_ID = "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -224,33 +226,23 @@ class LocalLlamaClassifier:
         "Reply with exactly one word: SUPPORT, OPPOSE, or NEUTRAL."
     )
 
-    def __init__(self, device: str = "cuda", batch_size: int = 16):
+    def __init__(self, batch_size: int = 32):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        actual_device = (
-            "cuda"
-            if device == "cuda" and torch.cuda.is_available()
-            else "cpu"
-        )
-        if device == "cuda" and actual_device == "cpu":
-            print("  [LocalLlamaClassifier] CUDA not available — falling back to CPU")
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.MODEL_ID)
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        dtype = torch.float16 if actual_device == "cuda" else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(
             self.MODEL_ID,
-            torch_dtype=dtype,
-            device_map=actual_device,
+            device_map="auto",
+            torch_dtype=torch.float16,
         )
         self.model.eval()
 
         self._torch = torch
-        self.device = actual_device
         self.batch_size = batch_size
 
     def _build_prompt(self, text: str, claim: str) -> str:
@@ -292,7 +284,7 @@ class LocalLlamaClassifier:
             padding=True,
             truncation=True,
             max_length=1024,
-        ).to(self.device)
+        ).to(self.model.device)
 
         input_len = inputs["input_ids"].shape[1]
 
