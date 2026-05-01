@@ -4,6 +4,7 @@ from scripts_environment_wrapper import environment
 
 RAW_PATH = Path(environment.RAW_FILE_PATH())
 OUT_PATH = Path(environment.CLEANED_FILE_PATH())
+FILTER_COLUMNS = False
 
 def clean_text(text: str) -> str:
     """Minimal, safe text cleaning."""
@@ -17,12 +18,12 @@ def clean_text(text: str) -> str:
 
 def main():
     print(f"Loading raw data from {RAW_PATH}")
-    df = pd.read_csv(RAW_PATH, low_memory=False)
+    df = pd.read_parquet(RAW_PATH)
 
     print(f"Initial rows: {len(df):,}")
 
     # Keep English only
-    if "language" in df.columns():
+    if "language" in df.columns:
         df = df[df["language"] == "en"]
         print(f"After language filter (en): {len(df):,}")
 
@@ -68,8 +69,9 @@ def main():
         raise KeyError(f"Still missing required columns: {missing}. Available: {df.columns.tolist()}")
 
     # Select canonical processed columns
-    
-    df_processed = df[
+
+    if FILTER_COLUMNS:
+        df_processed = df[
         [
             "id",
             "user_id",
@@ -77,7 +79,11 @@ def main():
             "text",
             "language",
         ]
-    ].rename(
+    ]
+    else:
+        df_processed = df
+    
+    df_processed = df_processed.rename(
         columns={
             "id": "post_id",
         }
