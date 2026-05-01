@@ -16,7 +16,8 @@ posts = [
         reply_parent_id=row.reply_parent_uri,
         reply_parent_author=row.reply_parent_author,
         reply_root_id=row.reply_root_uri,
-        reply_root_author=row.reply_root_author
+        reply_root_author=row.reply_root_author,
+        sample_type = row.sample_type
         
     )
     for _, row in df.iterrows()
@@ -41,6 +42,7 @@ out = pd.DataFrame({
     "reply_root_author": [p.reply_root_author for p in posts],
     "embedding": [p.embedding for p in posts],
     "stance": [0 for p in posts],
+    "sample_type": [p.sample_type for p in posts]
 })
 
 out.to_parquet(environment.PROCESSED_FILE_PATH(), index=False)

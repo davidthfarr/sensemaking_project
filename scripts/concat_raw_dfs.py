@@ -3,8 +3,8 @@ import pandas as pd
 
 # Load cleaned / filtered data
 
-df1 = pd.read_parquet("data/raw/ck_old/posts_from_top_accounts_ck.parquet")
-df2 = pd.read_parquet("data/raw/ck_old/top_level_replies_to_posts_from_top_accounts_ck.parquet")
+df1 = pd.read_parquet("data/raw/ck/posts_from_top_accounts_ck.parquet")
+df2 = pd.read_parquet("data/raw/ck/top_level_replies_to_posts_from_top_accounts_ck.parquet")
 #df3 = pd.read_parquet("data/raw/ck/quotes_of_posts_from_top_accounts_ck.parquet")
 
 # correct timestamps to strings

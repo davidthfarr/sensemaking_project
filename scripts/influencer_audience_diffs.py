@@ -53,4 +53,5 @@ while window_start <= max_time:
         print(f'{len(author_posts)} posts by {author} in {window_start}')
         audience_posts = cluster_df_supplemented[cluster_df_supplemented['reply_parent_author'] == author]
         print(f'{len(audience_posts)} comments on posts by {author} in {window_start}')
+        print(cluster_df_supplemented.columns)
 
