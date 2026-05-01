@@ -1,8 +1,9 @@
 import pandas as pd
 from pathlib import Path
+from scripts_environment_wrapper import environment
 
-RAW_PATH = Path("data/raw/ven_cleaned.csv")        # change if needed
-OUT_PATH = Path("data/processed/venezuela/ven_en_clean.parquet")
+RAW_PATH = Path(environment.RAW_FILE_PATH())
+OUT_PATH = Path(environment.CLEANED_FILE_PATH())
 
 def clean_text(text: str) -> str:
     """Minimal, safe text cleaning."""
@@ -21,8 +22,9 @@ def main():
     print(f"Initial rows: {len(df):,}")
 
     # Keep English only
-    df = df[df["language"] == "en"]
-    print(f"After language filter (en): {len(df):,}")
+    if "language" in df.columns():
+        df = df[df["language"] == "en"]
+        print(f"After language filter (en): {len(df):,}")
 
     # Parse timestamps
     '''df["timestamp"] = pd.to_datetime(
