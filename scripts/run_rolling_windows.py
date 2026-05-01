@@ -5,12 +5,14 @@ from datetime import timedelta
 from sensemaking.clustering.hdbscan import HDBSCANClusterer
 from sensemaking.data.schemas import Post
 
+from scripts_environment_wrapper import environment
+
 
 # -------------------------
 # Configuration
 # -------------------------
-PROCESSED_PATH = Path("data/processed/posts_repr_ck_with_top_level_replies.parquet")
-OUTPUT_DIR = Path("data/evaluated/ck_with_top_level_replies/hourly")
+PROCESSED_PATH = Path(environment.PROCESSED_FILE_PATH())
+OUTPUT_DIR = Path(environment.EVALUATED_DIR())
 
 ONLY_INFLUENCERS = False
 ONLY_REPLIES = False
