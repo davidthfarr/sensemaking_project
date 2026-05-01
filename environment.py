@@ -22,3 +22,6 @@ def PROCESSED_FILE_PATH():
 
 def EVALUATED_DIR():
     return env.get('evaluated_dir')
+
+def OUTPUT_HTML_FILE_PATH()
+    return env.get('output_html_filepath')

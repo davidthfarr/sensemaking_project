@@ -32,14 +32,15 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 import plotly.graph_objects as go
+import environment
 
 
 # -------------------------
 # Paths / Config
 # -------------------------
-REP_PATH = Path("data/processed/posts_repr_ck.parquet")
-EVAL_DIR = Path("data/evaluated/ck/hourly")
-OUT_HTML = Path("ck_narrative_drift_click.html")
+REP_PATH = Path(environment.PROCESSED_FILE_PATH())
+EVAL_DIR = Path(environment.EVALUATED_DIR())
+OUT_HTML = Path(environment.OUTPUT_HTML_FILE_PATH())
 
 TOP_K_REP = 4
 MIN_CLUSTER_POSTS = 8
