@@ -7,13 +7,14 @@ from sensemaking.data.schemas import Post
 from sensemaking.embeddings.encoder import EmbeddingEncoder
 from sensemaking.embeddings.stance import ZeroShotStanceLabeler
 from sensemaking.clustering.hdbscan import HDBSCANClusterer
+from scripts_environment_wrapper import environment
 
 # =====================
 # Paths
 # =====================
 
-PROCESSED_PATH = Path("data/processed/ukraine_en_clean.parquet")
-OUT_DIR = Path("data/evaluated/weekly")
+PROCESSED_PATH = Path(environment.PROCESSED_FILE_PATH())
+OUT_DIR = Path(environment.EVALUATED_DIR())
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # =====================

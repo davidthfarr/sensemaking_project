@@ -36,12 +36,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 from dash import Dash, dcc, html, Input, Output, State
 import plotly.graph_objects as go
 
+import environment
+
 
 # -------------------------
 # Paths / Config
 # -------------------------
-REP_PATH = Path("data/processed/posts_repr.parquet")
-EVAL_DIR = Path("data/evaluated/daily")
+REP_PATH = Path(environment.PROCESSED_FILE_PATH())
+EVAL_DIR = Path(environment.EVALUATED_DIR())
 
 # UI / preprocessing knobs
 TOP_K_REP = 5                 # representative tweets per cluster

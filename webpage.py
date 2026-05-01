@@ -37,14 +37,16 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 import plotly.graph_objects as go
 
+import environment
+
 
 # -------------------------
 # Paths / Config
 # -------------------------
-REP_PATH = Path("data/processed/posts_repr.parquet")
-EVAL_DIR = Path("data/evaluated/daily")
+REP_PATH = Path(environment.PROCESSED_FILE_PATH())
+EVAL_DIR = Path(environment.EVALUATED_DIR())
 
-OUT_HTML = Path("narrative_drift.html")
+OUT_HTML = Path(environment.OUTPUT_HTML_FILE_PATH())
 
 TOP_K_REP = 4                  # reps shown in hover
 MIN_CLUSTER_POSTS = 8          # filter small clusters in viz

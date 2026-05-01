@@ -5,20 +5,25 @@ from datetime import timedelta
 from sensemaking.clustering.hdbscan import HDBSCANClusterer
 from sensemaking.data.schemas import Post
 
+from scripts_environment_wrapper import environment
+
 
 # -------------------------
 # Configuration
 # -------------------------
-PROCESSED_PATH = Path("data/processed/venezuela/posts_repr.parquet")
-OUTPUT_DIR = Path("data/evaluated/ven/hourly")
+PROCESSED_PATH = Path(environment.PROCESSED_FILE_PATH())
+OUTPUT_DIR = Path(environment.EVALUATED_DIR())
 
-WINDOW_DAYS = 12  # currently in hours
-STEP_DAYS = 4
+ONLY_INFLUENCERS = False
+ONLY_REPLIES = False
 
-MIN_CLUSTER_SIZE = 8
+WINDOW_DAYS = 4 #currently in hours
+STEP_DAYS = 2
+
+MIN_CLUSTER_SIZE = 15
 MIN_SAMPLES = 2
-STANCE_WEIGHT = 0.05
-CLUSTER_SELECTION_EPSILON = 0.0  # raise to merge fragmented sub-clusters (0.1–0.5)
+STANCE_WEIGHT = 0
+CLUSTER_SELECTION_EPSILON = 0.3  # raise to merge fragmented sub-clusters (0.1–0.5)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -31,9 +36,16 @@ df = pd.read_parquet(PROCESSED_PATH)
 # Ensure sorted by time
 df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 df = df.sort_values("timestamp").reset_index(drop=True)
+print(df.shape)
+if ONLY_INFLUENCERS:
+    df = df[(df['reply_parent_id'].isna()) & (df['reply_root_id'].isna())]
+if ONLY_REPLIES:
+    df = df[(df['reply_parent_id'].notna()) | (df['reply_root_id'].notna())]
 
-min_time = df["timestamp"].min().floor("H")
-max_time = df["timestamp"].max().floor("H")
+print(df.shape)
+
+min_time = df["timestamp"].min().floor("h")
+max_time = df["timestamp"].max().floor("h")
 
 
 # -------------------------
@@ -68,6 +80,7 @@ while window_start <= max_time:
     posts = [
         Post(
             post_id=row.post_id,
+            user_id=row.user_id,
             timestamp=row.timestamp,
             text=row.text,
             embedding=row.embedding,
@@ -85,7 +98,7 @@ while window_start <= max_time:
     noise_frac = sum(p.is_noise for p in posts) / len(posts)
 
     print(
-        f"Window {window_start.date()} | "
+        f"Window {window_start} | "
         f"posts={len(posts):4d} | "
         f"clusters={num_clusters:2d} | "
         f"noise={noise_frac:.2f}"
@@ -107,7 +120,7 @@ while window_start <= max_time:
 
     print(
         f"Wrote {len(out_df):5d} posts "
-        f"for window starting {window_start.date()}"
+        f"for window starting {window_start}"
     )
 
     window_start += timedelta(hours=STEP_DAYS)

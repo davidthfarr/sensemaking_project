@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 scripts/build_representation.py
 scripts/prepare_processed_data.py
@@ -11,7 +12,6 @@ sensemaking.egg-info/requires.txt
 sensemaking.egg-info/top_level.txt
 sensemaking/clustering/alignment.py
 sensemaking/clustering/hdbscan.py
-sensemaking/data/__init__.py
 sensemaking/data/schemas.py
 sensemaking/embeddings/__init__.py
 sensemaking/embeddings/encoder.py

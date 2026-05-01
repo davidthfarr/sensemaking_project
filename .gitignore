@@ -1,50 +1,28 @@
 # data artifacts
-data/
-*.parquet
-*.csv
+data/*.parquet
+data/*.csv
+data/processed
+data/evaluated
+data/raw
+data/figures
+data/cleaned
+*.html
 
 # Jupyter
 .ipynb_checkpoints/
-# data artifacts
-data/
-*.parquet
-*.csv
 
-# Jupyter
-.ipynb_checkpoints/
 # Secrets
 .env
 *.key
 *.pem
 *.token
 *.secrets
-
-# Data artifacts
-data/
-*.csv
-*.parquet
-
-# Jupyter
-.ipynb_checkpoints/
+environment.json
 
 # Python
 __pycache__/
 .venv/
-# Secrets
-.env
-*.key
-*.pem
-*.token
-*.secrets
+venv/
 
-# Data artifacts
-data/
-*.csv
-*.parquet
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Python
-__pycache__/
-.venv/
+# Mac usage
+.DS_Store
