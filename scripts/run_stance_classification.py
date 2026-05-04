@@ -278,29 +278,36 @@ def run_cluster_mode(
     df_out["global_cluster_id"] = df_out["global_cluster_id"].astype(int)
     df_out = df_out.sort_values(["global_cluster_id", "post_id"]).reset_index(drop=True)
 
-    # Per-cluster stance metrics — joined back so every row carries them
+    # One row per cluster: aggregate stances then compute metrics
     def _cluster_metrics(grp: pd.DataFrame) -> pd.Series:
         n = len(grp)
         s   = (grp["stance"] == "support").sum() / n
         o   = (grp["stance"] == "oppose").sum()  / n
         neu = (grp["stance"] == "neutral").sum() / n
         return pd.Series({
+            "theme":            grp["theme"].iloc[0],
+            "n_posts":          n,
             "support_pct":      s,
             "oppose_pct":       o,
             "neutral_pct":      neu,
-            "controversy_score": 1.0 - abs(s - o),
+            "controversy_score": (1.0 - abs(s - o)) * (1.0 - neu),
             "stance_entropy":    float(scipy_entropy([s, o, neu], base=2)),
         })
 
-    metrics = df_out.groupby("global_cluster_id").apply(_cluster_metrics).reset_index()
-    df_out = df_out.merge(metrics, on="global_cluster_id", how="left")
+    df_out = (
+        df_out.groupby("global_cluster_id")
+        .apply(_cluster_metrics)
+        .reset_index()
+    )
     df_out.to_parquet(out_path, index=False)
 
-    support = (df_out["stance"] == "support").sum()
-    oppose  = (df_out["stance"] == "oppose").sum()
-    neutral = (df_out["stance"] == "neutral").sum()
-    log.info("Done. %d rows → %s  (support=%d  oppose=%d  neutral=%d)",
-             len(df_out), out_path, support, oppose, neutral)
+    log.info(
+        "Done. %d clusters → %s  (mean support=%.2f  oppose=%.2f  neutral=%.2f)",
+        len(df_out), out_path,
+        df_out["support_pct"].mean(),
+        df_out["oppose_pct"].mean(),
+        df_out["neutral_pct"].mean(),
+    )
 
 
 # ---------------------------------------------------------------------------
