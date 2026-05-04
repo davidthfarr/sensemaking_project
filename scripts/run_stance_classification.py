@@ -69,9 +69,9 @@ from sensemaking.stance.posthoc_gpt import (
 # ---------------------------------------------------------------------------
 
 TOPIC_CLAIMS = {
-    "venezuela": "The U.S. capture of Maduro was justified.",
-    "iran":      "U.S. military action against Iran is justified.",
-    "russia":    "Russia's invasion of Ukraine is justified.",
+    "venezuela": "The U.S. was correct in actions with respect to Maduro and Venezuela.",
+    "iran":      "U.S. military action against Iran was appropriate.",
+    "russia":    "Russia had legitimate reasons for its military actions in Ukraine.",
 }
 
 MIN_POSTS_PER_CLUSTER = 3
