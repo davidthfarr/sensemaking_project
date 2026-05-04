@@ -273,32 +273,42 @@ def run_cluster_mode(
         if is_gpt(args) and args.sleep > 0 and i < len(cluster_ids):
             time.sleep(args.sleep)
 
-    all_rows = existing_rows + new_rows
-    df_out = pd.DataFrame(all_rows)
-    df_out["global_cluster_id"] = df_out["global_cluster_id"].astype(int)
-    df_out = df_out.sort_values(["global_cluster_id", "post_id"]).reset_index(drop=True)
-
-    # One row per cluster: aggregate stances then compute metrics
+    # Aggregate new post-level rows into one cluster-level row per cluster
     def _cluster_metrics(grp: pd.DataFrame) -> pd.Series:
-        n = len(grp)
-        s   = (grp["stance"] == "support").sum() / n
-        o   = (grp["stance"] == "oppose").sum()  / n
-        neu = (grp["stance"] == "neutral").sum() / n
+        n_support = int((grp["stance"] == "support").sum())
+        n_oppose  = int((grp["stance"] == "oppose").sum())
+        n_neutral = int((grp["stance"] == "neutral").sum())
+        total     = n_support + n_oppose + n_neutral
+        s   = n_support / total if total else 0.0
+        o   = n_oppose  / total if total else 0.0
+        neu = n_neutral / total if total else 0.0
         return pd.Series({
-            "theme":            grp["theme"].iloc[0],
-            "n_posts":          n,
-            "support_pct":      s,
-            "oppose_pct":       o,
-            "neutral_pct":      neu,
+            "theme":             grp["theme"].iloc[0],
+            "n_posts":           total,
+            "support_pct":       s,
+            "oppose_pct":        o,
+            "neutral_pct":       neu,
             "controversy_score": (1.0 - abs(s - o)) * (1.0 - neu),
             "stance_entropy":    float(scipy_entropy([s, o, neu], base=2)),
         })
 
-    df_out = (
-        df_out.groupby("global_cluster_id")
+    df_new = pd.DataFrame(new_rows)
+    df_new["global_cluster_id"] = df_new["global_cluster_id"].astype(int)
+    df_new_agg = (
+        df_new.groupby("global_cluster_id")
         .apply(_cluster_metrics)
         .reset_index()
     )
+
+    # Combine with already-classified clusters (already cluster-level, no stance column)
+    if existing_rows:
+        df_existing = pd.DataFrame(existing_rows)
+        df_existing["global_cluster_id"] = df_existing["global_cluster_id"].astype(int)
+        df_out = pd.concat([df_existing, df_new_agg], ignore_index=True)
+    else:
+        df_out = df_new_agg
+
+    df_out = df_out.sort_values("global_cluster_id").reset_index(drop=True)
     df_out.to_parquet(out_path, index=False)
 
     log.info(
