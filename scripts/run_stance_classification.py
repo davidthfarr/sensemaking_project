@@ -53,8 +53,10 @@ from typing import Union
 warnings.filterwarnings("ignore", message=".*max_new_tokens.*max_length.*")
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
+from scipy.stats import entropy as scipy_entropy
 
 from sensemaking.data.schemas import Post
 from sensemaking.stance.posthoc_gpt import (
@@ -275,6 +277,23 @@ def run_cluster_mode(
     df_out = pd.DataFrame(all_rows)
     df_out["global_cluster_id"] = df_out["global_cluster_id"].astype(int)
     df_out = df_out.sort_values(["global_cluster_id", "post_id"]).reset_index(drop=True)
+
+    # Per-cluster stance metrics — joined back so every row carries them
+    def _cluster_metrics(grp: pd.DataFrame) -> pd.Series:
+        n = len(grp)
+        s   = (grp["stance"] == "support").sum() / n
+        o   = (grp["stance"] == "oppose").sum()  / n
+        neu = (grp["stance"] == "neutral").sum() / n
+        return pd.Series({
+            "support_pct":      s,
+            "oppose_pct":       o,
+            "neutral_pct":      neu,
+            "controversy_score": 1.0 - abs(s - o),
+            "stance_entropy":    float(scipy_entropy([s, o, neu], base=2)),
+        })
+
+    metrics = df_out.groupby("global_cluster_id").apply(_cluster_metrics).reset_index()
+    df_out = df_out.merge(metrics, on="global_cluster_id", how="left")
     df_out.to_parquet(out_path, index=False)
 
     support = (df_out["stance"] == "support").sum()
