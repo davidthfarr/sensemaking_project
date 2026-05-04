@@ -100,6 +100,8 @@ def parse_args() -> argparse.Namespace:
                    help="(cluster mode) skip clusters with fewer posts than this")
     p.add_argument("--sleep", type=float, default=SLEEP_BETWEEN_BATCHES,
                    help="Seconds to sleep between API calls (GPT only; 0 to disable)")
+    p.add_argument("--overwrite", action="store_true",
+                   help="Reclassify from scratch even if output already exists")
     return p.parse_args()
 
 
@@ -206,14 +208,16 @@ def run_cluster_mode(
     text_map = load_text_map(repr_path)
     log.info("  %d posts with text", len(text_map))
 
-    # Resume
+    # Resume (skipped when --overwrite is set)
     already_done: set[int] = set()
     existing_rows: list[dict] = []
-    if out_path.exists():
+    if out_path.exists() and not args.overwrite:
         existing_df = pd.read_parquet(out_path)
         already_done = set(existing_df["global_cluster_id"].astype(int).tolist())
         existing_rows = existing_df.to_dict("records")
         log.info("Resuming: %d clusters already classified", len(already_done))
+    elif out_path.exists() and args.overwrite:
+        log.info("--overwrite set: ignoring existing %s", out_path.name)
 
     posts_per_cluster = gc_df.groupby("global_cluster_id")["post_id"].count()
     cluster_ids = sorted(
@@ -309,14 +313,16 @@ def run_topic_mode(
     text_map = load_text_map(repr_path)
     log.info("  %d posts with text", len(text_map))
 
-    # Resume: skip post_ids already classified
+    # Resume: skip post_ids already classified (skipped when --overwrite is set)
     existing_stance_map: dict[str, str] = {}
-    if out_path.exists():
+    if out_path.exists() and not args.overwrite:
         existing_df = pd.read_parquet(out_path)
         existing_stance_map = dict(
             zip(existing_df["post_id"].astype(str), existing_df["stance"])
         )
         log.info("Resuming: %d post_ids already classified", len(existing_stance_map))
+    elif out_path.exists() and args.overwrite:
+        log.info("--overwrite set: ignoring existing %s", out_path.name)
 
     all_post_ids = gc_df["post_id"].unique().tolist()
     todo_ids = [pid for pid in all_post_ids if pid not in existing_stance_map]
