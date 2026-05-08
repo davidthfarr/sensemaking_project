@@ -9,7 +9,6 @@ EVAL_DIR = Path(environment.EVALUATED_DIR())
 rows = []
 
 for p in sorted(EVAL_DIR.glob("*.parquet")):
-    print(p)
     df = pd.read_parquet(p)
 
     rows.append({
@@ -51,7 +50,8 @@ fig.tight_layout()
 
 ax = plt.gca()
 num_ticks = len(ax.get_xticks())
-ax.set_xticks(ax.get_xticks()[::int(num_ticks / 25)])
+if num_ticks >= 30:
+    ax.set_xticks(ax.get_xticks()[::int(num_ticks / 20)])
 
 plt.show()
 plt.savefig('data/figures/ck-influentials-plus-top-level-replies-noise.png')
