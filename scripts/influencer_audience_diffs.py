@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import timedelta
 from tqdm import tqdm
 
-from sensemaking.clustering.hdbscan import HDBSCANClusterer
 from sensemaking.data.schemas import Post
 
 from scripts_environment_wrapper import environment
@@ -12,7 +11,6 @@ from scripts_environment_wrapper import environment
 # Configuration
 # -------------------------
 PROCESSED_PATH = Path(environment.PROCESSED_FILE_PATH())
-CLUSTER_DIR = Path(environment.EVALUATED_DIR())
 
 WINDOW_DAYS = 4 #currently in hours
 STEP_DAYS = 2

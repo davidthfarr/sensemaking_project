@@ -1,6 +1,6 @@
 from pathlib import Path
 import pandas as pd
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 from sensemaking.clustering.hdbscan import HDBSCANClusterer
 from sensemaking.data.schemas import Post
@@ -101,7 +101,8 @@ while window_start <= max_time:
         f"Window {window_start} | "
         f"posts={len(posts):4d} | "
         f"clusters={num_clusters:2d} | "
-        f"noise={noise_frac:.2f}"
+        f"noise={noise_frac:.2f} | "
+        f"cur_time={datetime.now()}"
     )
 
     # Write evaluated output
