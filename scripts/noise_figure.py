@@ -32,7 +32,7 @@ ax1.plot(
 )
 ax1.set_ylabel("Number of clusters")
 ax1.set_xlabel("Window")
-ax1.tick_params(axis="x", rotation=45)
+ax1.tick_params(axis="x", rotation=90)
 
 ax2 = ax1.twinx()
 ax2.plot(
@@ -48,6 +48,10 @@ ax2.set_ylabel("Fraction noise")
 # Title & legend
 fig.suptitle("Cluster Emergence Over Time")
 fig.tight_layout()
+
+ax = plt.gca()
+num_ticks = len(ax.get_xticks())
+ax.set_xticks(ax.get_xticks()[::int(num_ticks / 25)])
 
 plt.show()
 plt.savefig('data/figures/ck-influentials-plus-top-level-replies-noise.png')
