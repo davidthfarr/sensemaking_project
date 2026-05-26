@@ -34,9 +34,9 @@ def _compute_cluster_centroids(
         clusters.setdefault(post.cluster_id, []).append(post.embedding)
 
     centroids = {
-        cid: np.mean(np.vstack([e for e in embs if e.shape == (768,)]), axis=0)
+        cid: np.mean(np.vstack(valid_embs), axis=0)
         for cid, embs in clusters.items()
-        if any(e.shape == (768,) for e in embs)
+        if (valid_embs := [e for e in embs if e is not None and hasattr(e, "shape") and e.shape == (768,)])
     }
 
     return centroids
