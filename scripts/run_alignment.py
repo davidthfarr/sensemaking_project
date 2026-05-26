@@ -31,8 +31,8 @@ from sensemaking.data.schemas import Post
 
 SIMILARITY_THRESHOLD = 0.85
 
-# All column name variants that should be treated as post_id
-_POST_ID_ALIASES = ("Resource Id", "tweet_id", "id")
+# All column name variants that should be treated as post_id, in priority order
+_POST_ID_ALIASES = ("Resource Id", "tweet_id", "tweetid", "post id", "postid", "id")
 
 
 def normalise_post_id(df: pd.DataFrame) -> pd.DataFrame:
@@ -69,9 +69,14 @@ def build_posts(window_df: pd.DataFrame, embeddings: dict[str, np.ndarray]) -> l
     """
     Reconstruct Post objects with embeddings for a single window.
 
-    Expects window_df to already have a 'post_id' column (call
-    normalise_post_id before passing in if the source may use an alias).
+    Applies normalise_post_id defensively before iterating so callers
+    do not need to remember to normalise first.
     """
+    window_df = normalise_post_id(window_df)
+    if "post_id" not in window_df.columns:
+        raise KeyError(
+            f"Cannot find a post_id column. Available columns: {window_df.columns.tolist()}"
+        )
     posts = []
     for _, row in window_df.iterrows():
         emb = embeddings.get(str(row["post_id"]))
