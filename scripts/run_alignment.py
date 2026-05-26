@@ -55,11 +55,28 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+_EXCLUDED_STEMS = frozenset({
+    "global_clusters",
+    "cluster_stance",
+    "cluster_themes",
+    "topic_stance",
+    "topic_stance_by_window",
+    "cluster_labels",
+    "cluster_summaries",
+    "results",
+})
+
+
 def load_window_files(eval_dir: Path) -> list[Path]:
-    """Return per-window parquets sorted by window timestamp, excluding output files."""
+    """
+    Return per-window parquets sorted chronologically.
+
+    Explicitly excludes all known pipeline-output files so that only
+    window-timestamped parquets (YYYY-MM-DD-HH.parquet) are returned.
+    """
     files = [
         f for f in eval_dir.glob("*.parquet")
-        if f.stem not in ("global_clusters", "results")
+        if f.stem not in _EXCLUDED_STEMS
     ]
     # Filenames are %Y-%m-%d-%H — lexicographic sort is chronological
     return sorted(files)
