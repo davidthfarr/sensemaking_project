@@ -74,7 +74,14 @@ def main() -> None:
 
     # Load embeddings once, keyed by post_id
     print(f"Loading embeddings from {repr_path}")
-    repr_df = pd.read_parquet(repr_path, columns=["post_id", "embedding"])
+    repr_df = pd.read_parquet(repr_path)
+    if "Resource Id" in repr_df.columns and "post_id" not in repr_df.columns:
+        repr_df = repr_df.rename(columns={"Resource Id": "post_id"})
+    before = len(repr_df)
+    repr_df = repr_df.drop_duplicates(subset=["post_id"], keep="first")
+    n_dupes = before - len(repr_df)
+    if n_dupes > 0:
+        print(f"Dropped {n_dupes:,} duplicate post_ids")
     embeddings = {str(row["post_id"]): row["embedding"] for _, row in repr_df.iterrows()}
     print(f"  {len(embeddings):,} embeddings loaded")
 

@@ -86,6 +86,12 @@ def main() -> None:
     df_out["post_id"] = df_out["post_id"].astype(str)
     df_out["user_id"] = df_out["user_id"].astype(str)
 
+    before = len(df_out)
+    df_out = df_out.drop_duplicates(subset=["post_id"], keep="first")
+    n_dupes = before - len(df_out)
+    if n_dupes > 0:
+        print(f"Dropped {n_dupes:,} duplicate post_ids")
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df_out.to_parquet(out_path, index=False)
     print(f"Written → {out_path} ({len(df_out):,} rows)")

@@ -171,6 +171,16 @@ def main() -> None:
 
     print(f"Loading representations from {in_path}")
     df = pd.read_parquet(in_path)
+
+    if "Resource Id" in df.columns and "post_id" not in df.columns:
+        df = df.rename(columns={"Resource Id": "post_id"})
+
+    before = len(df)
+    df = df.drop_duplicates(subset=["post_id"], keep="first")
+    n_dupes = before - len(df)
+    if n_dupes > 0:
+        print(f"Dropped {n_dupes:,} duplicate post_ids")
+
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     df = df.sort_values("timestamp").reset_index(drop=True)
 

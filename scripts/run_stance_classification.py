@@ -167,8 +167,15 @@ def load_gc_nonoise(gc_path: Path) -> pd.DataFrame:
 
 
 def load_text_map(repr_path: Path) -> dict[str, str]:
-    df = pd.read_parquet(repr_path, columns=["post_id", "text"])
+    df = pd.read_parquet(repr_path)
+    if "Resource Id" in df.columns and "post_id" not in df.columns:
+        df = df.rename(columns={"Resource Id": "post_id"})
     df["post_id"] = df["post_id"].astype(str)
+    before = len(df)
+    df = df.drop_duplicates(subset=["post_id"], keep="first")
+    n_dupes = before - len(df)
+    if n_dupes > 0:
+        print(f"Dropped {n_dupes:,} duplicate post_ids")
     return dict(zip(df["post_id"], df["text"]))
 
 
