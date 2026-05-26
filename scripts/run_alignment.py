@@ -31,6 +31,23 @@ from sensemaking.data.schemas import Post
 
 SIMILARITY_THRESHOLD = 0.85
 
+# All column name variants that should be treated as post_id
+_POST_ID_ALIASES = ("Resource Id", "tweet_id", "id")
+
+
+def normalise_post_id(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rename any known post_id alias to 'post_id' if 'post_id' is not already present.
+
+    Checked in priority order: Resource Id, tweet_id, id.
+    """
+    if "post_id" not in df.columns:
+        for alias in _POST_ID_ALIASES:
+            if alias in df.columns:
+                df = df.rename(columns={alias: "post_id"})
+                break
+    return df
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
@@ -49,7 +66,12 @@ def load_window_files(eval_dir: Path) -> list[Path]:
 
 
 def build_posts(window_df: pd.DataFrame, embeddings: dict[str, np.ndarray]) -> list[Post]:
-    """Reconstruct Post objects with embeddings for a single window."""
+    """
+    Reconstruct Post objects with embeddings for a single window.
+
+    Expects window_df to already have a 'post_id' column (call
+    normalise_post_id before passing in if the source may use an alias).
+    """
     posts = []
     for _, row in window_df.iterrows():
         emb = embeddings.get(str(row["post_id"]))
@@ -75,8 +97,7 @@ def main() -> None:
     # Load embeddings once, keyed by post_id
     print(f"Loading embeddings from {repr_path}")
     repr_df = pd.read_parquet(repr_path)
-    if "Resource Id" in repr_df.columns and "post_id" not in repr_df.columns:
-        repr_df = repr_df.rename(columns={"Resource Id": "post_id"})
+    repr_df = normalise_post_id(repr_df)
     before = len(repr_df)
     repr_df = repr_df.drop_duplicates(subset=["post_id"], keep="first")
     n_dupes = before - len(repr_df)
@@ -98,8 +119,7 @@ def main() -> None:
     for wf in window_files:
         window_name = wf.stem
         window_df = pd.read_parquet(wf)
-        if "Resource Id" in window_df.columns and "post_id" not in window_df.columns:
-            window_df = window_df.rename(columns={"Resource Id": "post_id"})
+        window_df = normalise_post_id(window_df)
 
         curr_posts = build_posts(window_df, embeddings)
 
