@@ -98,6 +98,8 @@ def main() -> None:
     for wf in window_files:
         window_name = wf.stem
         window_df = pd.read_parquet(wf)
+        if "Resource Id" in window_df.columns and "post_id" not in window_df.columns:
+            window_df = window_df.rename(columns={"Resource Id": "post_id"})
 
         curr_posts = build_posts(window_df, embeddings)
 
