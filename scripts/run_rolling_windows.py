@@ -34,10 +34,12 @@ from sensemaking.data.schemas import Post
 # Per-case parameter defaults.
 # window_hours / step_hours are in hours; Russia uses 7d/1d windows.
 CASE_PARAMS = {
-    "venezuela": dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
-    "iran":      dict(window_hours=12,  step_hours=4,  min_cluster_size=8, min_samples=2),
-    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=5, min_samples=10,
-                     cluster_selection_epsilon=0.15),
+    "venezuela": dict(window_hours=8,   step_hours=4,  min_cluster_size=10, min_samples=3,
+                      cluster_selection_epsilon=0.2,  mcs_cap=20),
+    "iran":      dict(window_hours=24,  step_hours=8,  min_cluster_size=20, min_samples=3,
+                      cluster_selection_epsilon=0.3,  mcs_cap=30),
+    "russia":    dict(window_hours=168, step_hours=24, min_cluster_size=5,  min_samples=10,
+                      cluster_selection_epsilon=0.15, mcs_cap=50),
 }
 
 # If a window returns more clusters than this, double min_cluster_size and retry.
@@ -60,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-samples",       type=int,   default=None,
                    help="HDBSCAN min_samples (overrides case default)")
     p.add_argument("--cluster-epsilon",   type=float, default=None)
+    p.add_argument("--mcs-cap",           type=int,   default=None,
+                   help="Hard ceiling on dynamic min_cluster_size (overrides case default)")
     p.add_argument("--n-jobs",            type=int,   default=-1,
                    help="joblib n_jobs (-1 = all cores)")
     return p.parse_args()
@@ -77,6 +81,7 @@ def process_window(
     min_samples: int,
     cluster_epsilon: float,
     output_dir: Path,
+    mcs_cap: int = 9999,
 ) -> dict | None:
     """
     Cluster one window and write its parquet. Returns a summary dict, or None
@@ -101,8 +106,8 @@ def process_window(
         for _, row in window_df.iterrows()
     ]
 
-    # Dynamic base: 1 cluster per 50 posts, floor at min_cluster_size_floor
-    base_mcs = max(min_cluster_size_floor, len(posts) // 50)
+    # Dynamic base: 1 cluster per 50 posts, clamped between floor and mcs_cap
+    base_mcs = min(mcs_cap, max(min_cluster_size_floor, len(posts) // 50))
     attempt_mcs = base_mcs
     warnings: list[str] = []
 
@@ -158,11 +163,12 @@ def main() -> None:
     min_cluster_size_floor = args.min_cluster_size if args.min_cluster_size is not None else defaults["min_cluster_size"]
     min_samples            = args.min_samples      if args.min_samples      is not None else defaults["min_samples"]
     cluster_epsilon        = args.cluster_epsilon  if args.cluster_epsilon  is not None else defaults.get("cluster_selection_epsilon", 0.0)
+    mcs_cap                = args.mcs_cap          if args.mcs_cap          is not None else defaults.get("mcs_cap", 9999)
 
     print(
         f"Case: {args.case} | window={window_hours}h | step={step_hours}h | "
-        f"mcs_floor={min_cluster_size_floor} | min_samples={min_samples} | "
-        f"epsilon={cluster_epsilon} | n_jobs={args.n_jobs}"
+        f"mcs_floor={min_cluster_size_floor} | mcs_cap={mcs_cap} | "
+        f"min_samples={min_samples} | epsilon={cluster_epsilon} | n_jobs={args.n_jobs}"
     )
 
     in_path    = Path("data/processed") / args.case / "posts_repr.parquet"
@@ -200,7 +206,7 @@ def main() -> None:
         delayed(process_window)(
             ws, df, window_hours,
             min_cluster_size_floor, min_samples, cluster_epsilon,
-            output_dir,
+            output_dir, mcs_cap,
         )
         for ws in window_starts
     )
