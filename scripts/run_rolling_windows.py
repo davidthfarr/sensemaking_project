@@ -64,6 +64,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cluster-epsilon",   type=float, default=None)
     p.add_argument("--mcs-cap",           type=int,   default=None,
                    help="Hard ceiling on dynamic min_cluster_size (overrides case default)")
+    p.add_argument("--no-dynamic-mcs",    action="store_true", default=False,
+                   help="Disable dynamic min_cluster_size scaling; use floor as a fixed constant")
     p.add_argument("--n-jobs",            type=int,   default=-1,
                    help="joblib n_jobs (-1 = all cores)")
     return p.parse_args()
@@ -82,6 +84,7 @@ def process_window(
     cluster_epsilon: float,
     output_dir: Path,
     mcs_cap: int = 9999,
+    dynamic_mcs: bool = True,
 ) -> dict | None:
     """
     Cluster one window and write its parquet. Returns a summary dict, or None
@@ -106,8 +109,12 @@ def process_window(
         for _, row in window_df.iterrows()
     ]
 
-    # Dynamic base: 1 cluster per 50 posts, clamped between floor and mcs_cap
-    base_mcs = min(mcs_cap, max(min_cluster_size_floor, len(posts) // 50))
+    # Dynamic base: 1 cluster per 50 posts, clamped between floor and mcs_cap.
+    # When dynamic scaling is disabled, floor is used as a fixed constant.
+    if dynamic_mcs:
+        base_mcs = min(mcs_cap, max(min_cluster_size_floor, len(posts) // 50))
+    else:
+        base_mcs = min_cluster_size_floor
     attempt_mcs = base_mcs
     warnings: list[str] = []
 
@@ -165,10 +172,13 @@ def main() -> None:
     cluster_epsilon        = args.cluster_epsilon  if args.cluster_epsilon  is not None else defaults.get("cluster_selection_epsilon", 0.0)
     mcs_cap                = args.mcs_cap          if args.mcs_cap          is not None else defaults.get("mcs_cap", 9999)
 
+    dynamic_mcs = not args.no_dynamic_mcs
+
     print(
         f"Case: {args.case} | window={window_hours}h | step={step_hours}h | "
         f"mcs_floor={min_cluster_size_floor} | mcs_cap={mcs_cap} | "
-        f"min_samples={min_samples} | epsilon={cluster_epsilon} | n_jobs={args.n_jobs}"
+        f"dynamic_mcs={dynamic_mcs} | min_samples={min_samples} | "
+        f"epsilon={cluster_epsilon} | n_jobs={args.n_jobs}"
     )
 
     in_path    = Path("data/processed") / args.case / "posts_repr.parquet"
@@ -206,7 +216,7 @@ def main() -> None:
         delayed(process_window)(
             ws, df, window_hours,
             min_cluster_size_floor, min_samples, cluster_epsilon,
-            output_dir, mcs_cap,
+            output_dir, mcs_cap, dynamic_mcs,
         )
         for ws in window_starts
     )
