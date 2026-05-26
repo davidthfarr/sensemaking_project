@@ -51,16 +51,16 @@ def load_window_files(eval_dir: Path) -> list[Path]:
 def build_posts(window_df: pd.DataFrame, embeddings: dict[str, np.ndarray]) -> list[Post]:
     """Reconstruct Post objects with embeddings for a single window."""
     posts = []
-    for row in window_df.itertuples(index=False):
-        emb = embeddings.get(str(row.post_id))
+    for _, row in window_df.iterrows():
+        emb = embeddings.get(str(row["post_id"]))
         p = Post(
-            post_id=str(row.post_id),
+            post_id=str(row["post_id"]),
             text="",
             timestamp=None,
             embedding=emb,
         )
-        p.cluster_id = None if row.is_noise else row.cluster_id
-        p.is_noise = bool(row.is_noise)
+        p.cluster_id = None if row["is_noise"] else row["cluster_id"]
+        p.is_noise = bool(row["is_noise"])
         posts.append(p)
     return posts
 
@@ -75,7 +75,7 @@ def main() -> None:
     # Load embeddings once, keyed by post_id
     print(f"Loading embeddings from {repr_path}")
     repr_df = pd.read_parquet(repr_path, columns=["post_id", "embedding"])
-    embeddings = {str(row.post_id): row.embedding for row in repr_df.itertuples(index=False)}
+    embeddings = {str(row["post_id"]): row["embedding"] for _, row in repr_df.iterrows()}
     print(f"  {len(embeddings):,} embeddings loaded")
 
     window_files = load_window_files(eval_dir)
