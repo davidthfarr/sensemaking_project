@@ -46,6 +46,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", default="gpt-4o-mini")
     p.add_argument("--sleep", type=float, default=SLEEP_BETWEEN_CALLS,
                    help="Seconds to sleep between API calls")
+    p.add_argument("--overwrite", action="store_true", default=False,
+                   help="Relabel all clusters, ignoring any existing cluster_themes.parquet")
     return p.parse_args()
 
 
@@ -83,14 +85,16 @@ def main() -> None:
     cluster_ids = sorted(gc_df["global_cluster_id"].unique())
     print(f"  {len(cluster_ids)} non-noise clusters to label")
 
-    # Load existing output for resume support
+    # Load existing output for resume support (skipped when --overwrite is set)
     already_done: set[int] = set()
     existing_rows: list[dict] = []
-    if out_path.exists():
+    if out_path.exists() and not args.overwrite:
         existing_df = pd.read_parquet(out_path)
         already_done = set(existing_df["global_cluster_id"].astype(int).tolist())
         existing_rows = existing_df.to_dict("records")
         print(f"  Resuming: {len(already_done)} clusters already labeled")
+    elif out_path.exists() and args.overwrite:
+        print(f"  --overwrite set: ignoring existing {out_path.name}")
 
     labeler = StationaryThemeLabeler(model=args.model)
     new_rows: list[dict] = []
