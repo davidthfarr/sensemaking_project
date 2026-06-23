@@ -99,6 +99,7 @@ def main():
 
     print(f"Processed data written to {OUT_PATH}")
     print(df_processed.head())
+    print(df_processed.sample_type.unique())
 
 if __name__ == "__main__":
     main()

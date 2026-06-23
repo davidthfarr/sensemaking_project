@@ -85,6 +85,7 @@ while window_start <= max_time:
             text=row.text,
             embedding=row.embedding,
             stance=row.stance,
+            sample_type=row.sample_type
         )
         for _, row in window_df.iterrows()
     ]
