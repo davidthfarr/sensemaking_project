@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 from datetime import timedelta
 from tqdm import tqdm
+import re
 
 from sensemaking.data.schemas import Post
 
@@ -18,6 +19,7 @@ STEP_DAYS = 2
 
 df = pd.read_parquet(PROCESSED_PATH)
 df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+
 df = df.sort_values("timestamp").reset_index(drop=True)
 
 output_df = pd.DataFrame(columns=['window', 'influencer', 'influencer_avg_embed','audience_avg_embed', 'audience_clusters', 'audience_embeds'])
@@ -26,6 +28,12 @@ min_time = df["timestamp"].min().floor("h")
 max_time = df["timestamp"].max().floor("h")
 
 window_start = min_time
+
+#Fix at:// prefix for reply parent, account values
+df['user_id'] = df['user_id'].apply(lambda x: x.replace("at://", "") if type(x) == type("") else "")
+df['reply_parent_author'] = df['reply_parent_author'].apply(lambda x: x.replace("at://", "") if type(x) == type("") else "")
+df['reply_root_author'] = df['reply_root_author'].apply(lambda x: x.replace("at://", "") if type(x) == type("") else "")
+
 
 while window_start <= max_time:
     print(f'Starting window: {window_start}')
@@ -51,12 +59,14 @@ while window_start <= max_time:
         influencers_posts_subset = cluster_df_supplemented[cluster_df_supplemented['sample_type'] == 'influencers']
         reply_posts_subset = cluster_df_supplemented[cluster_df_supplemented['sample_type'] == 'replies']
         # Not all authors in influencers_subset will have posts in all intervals
-        influencers_subset = set(influencers_posts_subset['user_id'].unique()).union(set(reply_posts_subset['reply_parent_id'].unique()))
+        influencers_subset = set(influencers_posts_subset['user_id'].unique()).union(set(reply_posts_subset['reply_parent_author'].unique()))
+
+        influencers_subset = set(x.replace("at://", "") for x in influencers_subset)
         #print(f'influencers in {window_start}: {len(influencers_subset)}')
         for author in tqdm(influencers_subset):
             author_posts = influencers_posts_subset[influencers_posts_subset['user_id'] == author]
             #print(f'{len(author_posts)} posts by {author} in {window_start}')
-            audience_posts = cluster_df_supplemented[cluster_df_supplemented['reply_parent_id'] == author]
+            audience_posts = cluster_df_supplemented[cluster_df_supplemented['reply_parent_author'] == author]
             #print(f'{len(audience_posts)} comments on posts by {author} in {window_start}')
             #print(f'{audience_posts.cluster_id.nunique()} clusters of comments on posts by {author} in {window_start}')
             
