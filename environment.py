@@ -23,5 +23,8 @@ def PROCESSED_FILE_PATH():
 def EVALUATED_DIR():
     return env.get('evaluated_dir')
 
+def EVALUATED_AUDIENCE_CLUSTER_DIR():
+    return env.get('evaluated_audience_cluster_dir')
+
 def OUTPUT_HTML_FILE_PATH():
     return env.get('output_html_filepath')
