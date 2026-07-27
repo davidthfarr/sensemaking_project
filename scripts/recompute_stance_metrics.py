@@ -12,8 +12,8 @@ python scripts/recompute_stance_metrics.py --case venezuela
 python scripts/recompute_stance_metrics.py  # all cases
 
 Metrics added / updated:
-  controversy_score  = (1 - |support_pct - oppose_pct|) * (1 - neutral_pct)
-      1.0 for a pure 50/50 split; penalised toward 0 as neutral dominates.
+  controversy_score  = 1 - neutral_pct - |support_pct - oppose_pct|  (= 2 * min(s, o))
+      1.0 for a pure 50/50 split with zero neutrals; 0 when one side dominates or all neutral.
   stance_entropy     = scipy.stats.entropy([support_pct, oppose_pct, neutral_pct], base=2)
       Max ≈ 1.58 (log2 3) when all three stances are equal; 0 when unanimous.
 """
@@ -79,7 +79,7 @@ def compute_metrics(df: pd.DataFrame) -> pd.DataFrame:
     o   = df["oppose_pct"]
     neu = df["neutral_pct"]
 
-    df["controversy_score"] = (1.0 - (s - o).abs()) * (1.0 - neu)
+    df["controversy_score"] = 1.0 - neu - (s - o).abs()
     df["stance_entropy"] = [
         float(scipy_entropy([si, oi, ni], base=2))
         for si, oi, ni in zip(s, o, neu)
