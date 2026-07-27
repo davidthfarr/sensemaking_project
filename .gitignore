@@ -1,4 +1,4 @@
-# Secrets
+﻿# Secrets
 .env
 *.key
 *.pem
@@ -6,12 +6,17 @@
 *.secrets
 
 # Data artifacts (raw / processed / evaluated datasets)
-data/
+# Use data/* (not data/) so negation rules below can re-include specific subdirs
+data/*
 *.parquet
 *.csv
 
-# Source package named 'data' is not a data artifact
-!sensemaking/data/
+# Event timelines are committed as static inputs, not generated artifacts
+!data/event_timelines
+!data/event_timelines/*.csv
+
+# Generated notebook outputs (tables, figures, annotation)
+outputs/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -19,3 +24,4 @@ data/
 # Python
 __pycache__/
 .venv/
+*.egg-info/

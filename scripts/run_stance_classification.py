@@ -295,7 +295,7 @@ def run_cluster_mode(
             "support_pct":       s,
             "oppose_pct":        o,
             "neutral_pct":       neu,
-            "controversy_score": (1.0 - abs(s - o)) * (1.0 - neu),
+            "controversy_score": 1.0 - neu - abs(s - o),
             "stance_entropy":    float(scipy_entropy([s, o, neu], base=2)),
         })
 
