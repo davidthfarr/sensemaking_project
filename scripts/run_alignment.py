@@ -29,7 +29,7 @@ import pandas as pd
 from sensemaking.clustering.alignment import align_clusters
 from sensemaking.data.schemas import Post
 
-SIMILARITY_THRESHOLD = 0.85
+SIMILARITY_THRESHOLD = 0.70
 
 # All column name variants that should be treated as post_id, in priority order
 _POST_ID_ALIASES = ("Resource Id", "tweet_id", "tweetid", "post id", "postid", "id")
