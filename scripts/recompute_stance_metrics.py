@@ -89,7 +89,7 @@ def compute_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_case(case: str) -> None:
     stance_path = Path("data/evaluated") / case / "cluster_stance.parquet"
-    gc_path     = Path("data/processed")  / case / "global_clusters.parquet"
+    gc_path     = Path("data/evaluated")  / case / "global_clusters.parquet"
 
     if not stance_path.exists():
         print(f"  [skip] {case}: {stance_path} not found")
