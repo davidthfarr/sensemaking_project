@@ -5,6 +5,7 @@ Run once on the analysis server (where nbformat is available):
     python generate_notebook.py
 """
 
+from pathlib import Path
 import nbformat as nbf
 
 nb = nbf.v4.new_notebook()
