@@ -146,16 +146,21 @@ def load_case_data(case: str) -> pd.DataFrame:
         df["persistence"] = np.nan
 
     # ── Theme labels ──────────────────────────────────────────────────────────
-    themes_path = case_dir / "cluster_themes.parquet"
-    if themes_path.exists():
-        themes = pd.read_parquet(themes_path)
-        themes["global_cluster_id"] = themes["global_cluster_id"].astype(int)
-        df = df.merge(themes[["global_cluster_id", "theme"]], on="global_cluster_id", how="left")
-        df["theme_label"] = df["theme"].fillna("")
-    elif "theme" in df.columns:
+    # cluster_stance.parquet already carries "theme" from run_stance_classification.py;
+    # only fall back to cluster_themes.parquet if it's absent.
+    if "theme" in df.columns:
         df["theme_label"] = df["theme"].fillna("")
     else:
-        df["theme_label"] = ""
+        themes_path = case_dir / "cluster_themes.parquet"
+        if themes_path.exists():
+            themes = pd.read_parquet(themes_path)
+            themes["global_cluster_id"] = themes["global_cluster_id"].astype(int)
+            df = df.merge(
+                themes[["global_cluster_id", "theme"]], on="global_cluster_id", how="left"
+            )
+            df["theme_label"] = df["theme"].fillna("")
+        else:
+            df["theme_label"] = ""
 
     df["case"]       = case
     df["cluster_id"] = df["global_cluster_id"]
