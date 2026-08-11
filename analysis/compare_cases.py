@@ -717,7 +717,9 @@ def plot_stance_over_time(out_dir: Path) -> None:
             continue
 
         smooth  = df[["support_pct","neutral_pct","oppose_pct"]].rolling(3, min_periods=1, center=True).mean()
-        dates   = df["window_dt"].dt.to_pydatetime()
+        # to_pydatetime() returns ndarray; convert to list to avoid pandas 2.x
+        # label-based indexing issues (series[-1] raises KeyError since 2.0).
+        dates   = list(df["window_dt"].dt.to_pydatetime())
 
         ax.stackplot(
             dates,
