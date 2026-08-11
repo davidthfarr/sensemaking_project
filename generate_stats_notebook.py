@@ -64,7 +64,7 @@ from scipy import stats as scipy_stats
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 pd.set_option("display.float_format", "{:.4f}".format)
-pd.set_option("display.max_colnames", 30)
+pd.set_option("display.max_columns", 30)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT        = Path(".")
@@ -796,4 +796,4 @@ nb.cells = cells
 
 out_path = Path("analysis_stats.ipynb")
 nbf.write(nb, str(out_path))
-print(f"Written → {out_path}  ({len(cells)} cells)")
+print(f"Written -> {out_path}  ({len(cells)} cells)")
