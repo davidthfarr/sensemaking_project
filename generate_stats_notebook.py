@@ -140,20 +140,6 @@ from analysis.offtopic_rules import apply_to_dataframe, RULES, classify_cluster
 
 INCLUDE_DOMESTIC_POLITICAL = False  # change to True to run sensitivity check
 
-df = df.copy()
-for case in df["case"].unique():
-    mask = df["case"] == case
-    apply_to_dataframe(
-        df.loc[mask],
-        case=case,
-        theme_col="theme",
-        include_domestic_political=INCLUDE_DOMESTIC_POLITICAL,
-    )
-    # apply_to_dataframe modifies in-place but mask indexing needs assignment
-    df.loc[mask, "on_topic"]        = df.loc[mask, "on_topic"]
-    df.loc[mask, "offtopic_category"] = df.loc[mask, "offtopic_category"]
-
-# Re-apply because of loc copy semantics
 dfs = []
 for case in df["case"].unique():
     sub = df[df["case"] == case].copy()
