@@ -675,6 +675,356 @@ print(sample_df.groupby(["case","region","stance_class"]).size().to_string())
 """))
 
 
+# ── Section 7b: Post-level annotation sample ─────────────────────────────────
+cells.append(md("""\
+## 7b  Post-Level Annotation Sample
+
+Exports a dual-annotator package for validating cluster-mode stance labels.
+
+**Design choices:**
+- Stratify by (case × model-stance class × region) — 27 strata × 8 posts ≈ 216 posts
+- `sample_id` is UUID v5 of `post_id` — stable across reruns, not traceable to
+  case or cluster
+- Annotation files contain no metadata (no case, region, cluster id, model label)
+  to avoid biasing judgment
+- `annotation_key.csv` holds all metadata for post-labeling join
+- `annotation_a.csv` / `annotation_b.csv` carry identical rows in different random
+  orders so the two annotators don't work through the same sequence
+- `annotation_instructions.txt` contains the exact gpt-4o-mini system prompt,
+  so annotator instructions can match it verbatim
+
+**Note on `gpt_stance`:** per-post cluster-mode stance is not saved by the
+pipeline (only cluster-level proportions are). `gpt_stance` here is the cluster's
+modal stance (argmax of p_support, p_oppose, p_neutral). The scoring cell compares
+adjudicated human labels against this modal label.
+"""))
+
+cells.append(code("""\
+import uuid as _uuid
+
+POST_SAMPLE_N = 8        # posts per (case x gpt_stance x region) stratum
+ANNOT_DIR     = ROOT / "annotation"
+ANNOT_DIR.mkdir(exist_ok=True)
+
+# ── Exact system prompt used by PosthocGPTStanceClassifier ────────────────────
+_SYSTEM_PROMPT_TEXT = ""\"\\
+You are a stance classifier for social media posts.
+
+Given a narrative claim and a numbered list of posts, classify each post's \\
+stance toward the claim. Reply with a JSON object in this exact format:
+{"stances": ["support", "neutral", "oppose", ...]}
+
+Rules:
+- support: the post affirms, endorses, agrees with, or spreads the claim
+- oppose: the post rejects, counters, disputes, or contradicts the claim
+- neutral: the post is unrelated to the claim, ambiguous, or takes no clear position
+
+Return one label per post, in the same order as the input. Use only the \\
+words "support", "oppose", or "neutral".\\
+""\"
+
+instructions_text = f""\"ANNOTATION INSTRUCTIONS
+=======================
+
+Your task: for each post, decide whether it SUPPORTS, OPPOSES, or is NEUTRAL
+toward the stance_target claim shown in the same row.
+
+Labels
+------
+  support  — the post affirms, endorses, agrees with, or spreads the claim
+  oppose   — the post rejects, counters, disputes, or contradicts the claim
+  neutral  — the post is unrelated, ambiguous, or takes no clear position
+
+Procedure
+---------
+1. Read the stance_target (a short narrative claim).
+2. Read the post_text.
+3. Enter your label in the annotator_stance column (support / oppose / neutral).
+4. Use annotator_notes for anything noteworthy — irony, ambiguity, non-English
+   text, clearly off-topic content, etc.  Leave blank if straightforward.
+5. Do not skip rows; mark genuinely unclear posts as neutral.
+
+The exact system prompt used when classifying these posts with gpt-4o-mini —
+match these label definitions verbatim in your instructions to annotators:
+
+---
+{_SYSTEM_PROMPT_TEXT}
+---
+""\"
+
+(ANNOT_DIR / "annotation_instructions.txt").write_text(instructions_text, encoding="utf-8")
+print("Wrote annotation_instructions.txt")
+print()
+print("System prompt printed to output for record:")
+print("─" * 60)
+print(_SYSTEM_PROMPT_TEXT)
+print("─" * 60)
+
+# ── Derive gpt_stance as cluster modal stance ─────────────────────────────────
+# Per-post cluster-mode stance is not saved by run_stance_classification.py.
+# Modal stance = argmax(p_support, p_oppose, p_neutral) for the cluster.
+df_on["gpt_stance"] = df_on.apply(
+    lambda r: max(["support", "oppose", "neutral"], key=lambda k: r[f"p_{k}"]),
+    axis=1,
+)
+
+# ── Load post-level data from pipeline artifacts ──────────────────────────────
+post_frames = []
+for case in CASES:
+    eval_dir  = ROOT / "data" / "evaluated" / case
+    repr_path = ROOT / "data" / "processed" / case / "posts_repr.parquet"
+    gc_path   = eval_dir / "global_clusters.parquet"
+
+    if not gc_path.exists():
+        print(f"  {case}: global_clusters.parquet not found — skipping")
+        continue
+    if not repr_path.exists():
+        print(f"  {case}: posts_repr.parquet not found — skipping")
+        continue
+
+    # Post -> cluster assignment: non-noise, one row per post (first window seen)
+    gc = pd.read_parquet(gc_path, columns=["post_id", "global_cluster_id", "is_noise"])
+    gc["post_id"] = gc["post_id"].astype(str)
+    gc = gc[~gc["is_noise"].fillna(False) & gc["global_cluster_id"].notna()].copy()
+    gc["global_cluster_id"] = gc["global_cluster_id"].astype(int)
+    gc = gc.drop_duplicates(subset=["post_id"], keep="first")
+
+    # Post text
+    repr_df = pd.read_parquet(repr_path)
+    for alias in ("Resource Id", "tweet_id", "tweetid", "post id", "postid"):
+        if alias in repr_df.columns and "post_id" not in repr_df.columns:
+            repr_df = repr_df.rename(columns={alias: "post_id"})
+    repr_df["post_id"] = repr_df["post_id"].astype(str)
+    repr_df = repr_df.drop_duplicates(subset=["post_id"])[["post_id", "text"]]
+
+    merged = gc.merge(repr_df, on="post_id", how="inner")
+    merged["case"] = case
+    post_frames.append(merged)
+    print(f"  {case}: {len(merged):,} post-cluster pairs loaded")
+
+if not post_frames:
+    print("\\nNo post-level data found. Ensure global_clusters.parquet and")
+    print("posts_repr.parquet exist for each case, then re-run this cell.")
+else:
+    posts_all = pd.concat(post_frames, ignore_index=True)
+
+    # Join to df_on: adds region, theme, gpt_stance; filters to on-topic clusters
+    posts_joined = posts_all.merge(
+        df_on[["case", "global_cluster_id", "theme", "region", "gpt_stance"]],
+        on=["case", "global_cluster_id"],
+        how="inner",
+    )
+    print(f"\\nPost-level on-topic coverage: {len(posts_joined):,} posts "
+          f"across {posts_joined['global_cluster_id'].nunique()} clusters")
+
+    # Stratum distribution
+    strat_counts = posts_joined.groupby(["case", "gpt_stance", "region"]).size()
+    print("\\nAvailable posts per (case x gpt_stance x region) stratum:")
+    print(strat_counts.to_string())
+
+    # ── Stratified sample ────────────────────────────────────────────────────
+    rng_annot  = np.random.default_rng(2024)
+    sample_rows, stratum_report = [], []
+
+    for (case, stance, region), grp in posts_joined.groupby(["case","gpt_stance","region"]):
+        n_avail = len(grp)
+        n_take  = min(POST_SAMPLE_N, n_avail)
+        chosen  = grp.sample(n=n_take, random_state=rng_annot.integers(0, 2**31))
+        sample_rows.append(chosen)
+        stratum_report.append({
+            "case": case, "gpt_stance": stance, "region": region,
+            "n_available": n_avail, "n_sampled": n_take,
+            "underpopulated": n_avail < POST_SAMPLE_N,
+        })
+
+    sample_all  = pd.concat(sample_rows, ignore_index=True)
+    stratum_df  = pd.DataFrame(stratum_report)
+
+    n_full  = (stratum_df.n_sampled == POST_SAMPLE_N).sum()
+    n_under = stratum_df.underpopulated.sum()
+
+    print(f"\\nStratum report  (target: {POST_SAMPLE_N} posts each):")
+    print(stratum_df.to_string(index=False))
+    print(f"\\nTotal posts sampled : {len(sample_all)}")
+    print(f"Full strata         : {n_full} / {len(stratum_df)}")
+    print(f"Underpopulated      : {n_under} / {len(stratum_df)}")
+
+    STATS["annotation_post_n"]           = len(sample_all)
+    STATS["annotation_strata_full"]      = int(n_full)
+    STATS["annotation_strata_under"]     = int(n_under)
+
+    # ── Stable sample_id (UUID v5, not derivable from case/cluster) ──────────
+    _NS = _uuid.UUID("3b4a9c2e-11f0-4e87-b2d8-0f9c1a7e5342")
+    sample_all["sample_id"] = sample_all["post_id"].apply(
+        lambda pid: str(_uuid.uuid5(_NS, str(pid)))
+    )
+
+    # ── Key file: metadata for post-labeling join ─────────────────────────────
+    key_df = sample_all[["sample_id","case","global_cluster_id","region","gpt_stance"]].copy()
+    key_path = ANNOT_DIR / "annotation_key.csv"
+    key_df.to_csv(key_path, index=False)
+    print(f"\\nWrote {len(key_df)} rows -> annotation_key.csv")
+
+    # ── Annotation files: no metadata that could bias judgment ────────────────
+    sample_all["stance_target"]    = sample_all["theme"]
+    sample_all["post_text"]        = sample_all["text"]
+    sample_all["annotator_stance"] = ""
+    sample_all["annotator_notes"]  = ""
+    ANNOT_COLS = ["sample_id","stance_target","post_text","annotator_stance","annotator_notes"]
+
+    annot_base = sample_all[ANNOT_COLS].copy()
+
+    # Annotator A and B — same rows, different random orders
+    idx_a = rng_annot.permutation(len(annot_base))
+    idx_b = rng_annot.permutation(len(annot_base))
+    # Verify they differ (astronomically unlikely to collide but assert for safety)
+    assert not np.array_equal(idx_a, idx_b), "Permutations collided — change seed"
+
+    annot_a = annot_base.iloc[idx_a].reset_index(drop=True)
+    annot_b = annot_base.iloc[idx_b].reset_index(drop=True)
+
+    path_a = ANNOT_DIR / "annotation_a.csv"
+    path_b = ANNOT_DIR / "annotation_b.csv"
+    annot_a.to_csv(path_a, index=False)
+    annot_b.to_csv(path_b, index=False)
+    print(f"Wrote annotation_a.csv ({len(annot_a)} rows)")
+    print(f"Wrote annotation_b.csv ({len(annot_b)} rows)")
+    print(f"\\nAll annotation files -> {ANNOT_DIR}/")
+"""))
+
+
+# ── Section 7c: Inter-annotator agreement scoring (stub) ─────────────────────
+cells.append(md("""\
+## 7c  Annotation Scoring
+
+Run after both annotators have completed their files.
+Rename the filled-in files to `annotation_a_done.csv` and `annotation_b_done.csv`.
+
+Computes:
+- Cohen's κ between annotators A and B
+- Disagreement list (exported for manual adjudication)
+- Macro-F1 and 3×3 confusion matrix of adjudicated labels vs `gpt_stance`
+
+Results are written to `STATS`.
+"""))
+
+cells.append(code("""\
+from pathlib import Path
+
+KEY_PATH    = ANNOT_DIR / "annotation_key.csv"
+DONE_A_PATH = ANNOT_DIR / "annotation_a_done.csv"
+DONE_B_PATH = ANNOT_DIR / "annotation_b_done.csv"
+
+if not DONE_A_PATH.exists() or not DONE_B_PATH.exists():
+    missing = [p for p in (DONE_A_PATH, DONE_B_PATH) if not p.exists()]
+    print("Scoring stub — annotation not yet complete.")
+    for p in missing:
+        print(f"  Missing: {p}")
+    print("\\nOnce annotators have finished:")
+    print("  1. Copy annotation_a.csv -> annotation_a_done.csv (filled in)")
+    print("  2. Copy annotation_b.csv -> annotation_b_done.csv (filled in)")
+    print("  3. Re-run this cell.")
+else:
+    from sklearn.metrics import cohen_kappa_score, f1_score, confusion_matrix
+
+    STANCE_ORDER = ["support", "oppose", "neutral"]
+    VALID_LABELS = set(STANCE_ORDER)
+
+    key    = pd.read_csv(KEY_PATH)
+    done_a = pd.read_csv(DONE_A_PATH)
+    done_b = pd.read_csv(DONE_B_PATH)
+
+    for df_ in (done_a, done_b):
+        df_["annotator_stance"] = df_["annotator_stance"].str.strip().str.lower()
+
+    merged = (
+        done_a[["sample_id","annotator_stance"]]
+        .rename(columns={"annotator_stance": "label_a"})
+        .merge(
+            done_b[["sample_id","annotator_stance"]]
+            .rename(columns={"annotator_stance": "label_b"}),
+            on="sample_id",
+        )
+        .merge(key[["sample_id","case","global_cluster_id","region","gpt_stance"]],
+               on="sample_id")
+    )
+
+    # Drop rows with invalid or missing labels
+    scorable = merged[
+        merged["label_a"].isin(VALID_LABELS) & merged["label_b"].isin(VALID_LABELS)
+    ].copy()
+    n_invalid = len(merged) - len(scorable)
+    if n_invalid:
+        print(f"WARNING: {n_invalid} rows dropped (invalid/blank label_a or label_b)")
+    print(f"Scorable rows: {len(scorable)} / {len(key)}")
+
+    # ── Cohen's kappa ─────────────────────────────────────────────────────────
+    kappa = cohen_kappa_score(scorable["label_a"], scorable["label_b"],
+                              labels=STANCE_ORDER)
+    print(f"\\nInter-annotator Cohen's kappa: {kappa:.3f}")
+    STATS["annotation_kappa"] = round(float(kappa), 3)
+
+    # ── Adjudication ──────────────────────────────────────────────────────────
+    # Agreement -> take that label; disagreement -> None (requires manual resolution)
+    scorable["adj_label"]          = np.where(
+        scorable["label_a"] == scorable["label_b"], scorable["label_a"], None
+    )
+    scorable["needs_adjudication"] = scorable["adj_label"].isna()
+
+    n_disagree = scorable["needs_adjudication"].sum()
+    pct_disagree = 100 * n_disagree / len(scorable) if len(scorable) else 0
+    print(f"Agreements  : {len(scorable) - n_disagree} ({100-pct_disagree:.1f}%)")
+    print(f"Disagreements requiring adjudication: {n_disagree} ({pct_disagree:.1f}%)")
+    STATS["annotation_n_disagreements"] = int(n_disagree)
+
+    if n_disagree > 0:
+        disagree_path = ANNOT_DIR / "annotation_disagreements.csv"
+        disagree_cols = ["sample_id","label_a","label_b","gpt_stance","case","region"]
+        scorable[scorable.needs_adjudication][disagree_cols].to_csv(
+            disagree_path, index=False
+        )
+        print(f"Wrote {disagree_path.name} for manual adjudication")
+        print("\\nDisagreement breakdown by case:")
+        print(scorable[scorable.needs_adjudication]
+              .groupby(["case","label_a","label_b"]).size().to_string())
+
+    # ── Macro-F1 and confusion matrix (adjudicated rows only) ─────────────────
+    adj = scorable[~scorable.needs_adjudication].copy()
+    print(f"\\nAdjudicated rows available for F1/confusion: {len(adj)}")
+
+    if len(adj) >= 3:
+        f1_macro = f1_score(
+            adj["gpt_stance"], adj["adj_label"],
+            labels=STANCE_ORDER, average="macro", zero_division=0
+        )
+        print(f"Macro-F1 (adjudicated human vs gpt_stance modal): {f1_macro:.3f}")
+        STATS["annotation_f1_macro"] = round(float(f1_macro), 3)
+
+        cm = confusion_matrix(adj["gpt_stance"], adj["adj_label"],
+                              labels=STANCE_ORDER)
+        cm_df = pd.DataFrame(
+            cm,
+            index  =[f"gpt_{s}" for s in STANCE_ORDER],
+            columns=[f"human_{s}" for s in STANCE_ORDER],
+        )
+        print("\\nConfusion matrix (rows=gpt_stance, cols=adjudicated human label):")
+        print(cm_df.to_string())
+        STATS["annotation_confusion_matrix"] = cm_df.to_dict()
+
+        # Per-case F1
+        print("\\nMacro-F1 per case:")
+        for case in sorted(adj["case"].unique()):
+            sub = adj[adj.case == case]
+            if len(sub) >= 3:
+                f1_c = f1_score(sub["gpt_stance"], sub["adj_label"],
+                                labels=STANCE_ORDER, average="macro", zero_division=0)
+                print(f"  {case:<12}: {f1_c:.3f}  (n={len(sub)})")
+                STATS[f"annotation_f1_macro_{case}"] = round(float(f1_c), 3)
+    else:
+        print("Insufficient adjudicated rows for macro-F1 / confusion matrix.")
+"""))
+
+
 # ── Section 8: Regenerate figures ─────────────────────────────────────────────
 cells.append(md("""\
 ## 8  Regenerate Figures from Filtered Data
