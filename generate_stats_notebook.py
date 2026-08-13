@@ -561,6 +561,305 @@ if contingency.shape[0] >= 2 and contingency.shape[1] >= 2:
 """))
 
 
+# ── Section 5b: Per-case narrative statistics ──────────────────────────────────
+cells.append(md("""\
+## 5b  Per-Case Narrative Statistics
+
+One function called once per case; output follows the prose template order so
+it can be read top-to-bottom while drafting each case section.
+
+Every quantity is written to `STATS` under `{case}_{key}`.
+
+**Window-assignments vs unique posts**: `df_on.n_posts` is unique posts per cluster
+(deduplicated by post_id within each cluster). Its cross-cluster sum exceeds the
+true unique-post count because a post that appears in overlapping windows can belong
+to multiple clusters. Cross-cluster sums are labelled *window-assignments* here;
+per-cluster `n_posts` values are *posts in cluster*.
+"""))
+
+cells.append(code("""\
+from sklearn.linear_model import LinearRegression as _LR
+
+_CASE_LABEL = {'venezuela': 'Venezuela', 'iran': 'Iran', 'russia': 'Russia-Ukraine'}
+
+
+def report_case(case, MIN_POSTS_REVIEW=10,
+                N_TOP_VOL=8, N_TOP_C=5, N_TOP_RESID=5, N_FR_SAMPLE=5):
+    '''
+    Print per-case narrative statistics in prose order; write all quantities
+    to STATS. Reads df, df_on, STATS, ROOT, CASE_WINDOWS_CONFIG,
+    bootstrap_share from notebook global scope.
+    '''
+    sub      = df_on[df_on['case'] == case].copy()
+    sub_raw  = df[df['case'] == case].copy()
+    cfg      = CASE_WINDOWS_CONFIG[case]
+    step_h   = cfg['step_h']
+    n_days   = cfg['n_days']
+    SEP      = '-' * 60
+
+    def SK(key, val):
+        STATS[f'{case}_{key}'] = val
+        return val
+
+    print(f'\\n{"=" * 62}')
+    print(f'  {_CASE_LABEL[case]}')
+    print(f'{"=" * 62}')
+
+    # ── 1. Corpus and parameters ──────────────────────────────────────────────
+    print(f'\\n  1. Corpus and parameters')
+    print(f'  {SEP}')
+
+    gc_path   = ROOT / 'data' / 'evaluated' / case / 'global_clusters.parquet'
+    repr_path = ROOT / 'data' / 'processed'  / case / 'posts_repr.parquet'
+
+    if gc_path.exists():
+        gc = pd.read_parquet(gc_path, columns=['post_id', 'global_cluster_id', 'is_noise'])
+        gc['post_id']  = gc['post_id'].astype(str)
+        gc['is_noise'] = gc['is_noise'].fillna(False).astype(bool)
+        n_corpus      = gc['post_id'].nunique()
+        gc_nn         = gc[~gc['is_noise'] & gc['global_cluster_id'].notna()]
+        n_clustered   = gc_nn['post_id'].nunique()
+        n_assignments = len(gc_nn)
+        noise_rate    = 1.0 - n_clustered / n_corpus if n_corpus else float('nan')
+        mean_wposts   = n_assignments / n_clustered  if n_clustered else float('nan')
+        SK('n_posts_corpus',           int(n_corpus))
+        SK('n_posts_clustered_unique', int(n_clustered))
+        SK('n_window_assignments',     int(n_assignments))
+        SK('noise_rate',               round(float(noise_rate), 4))
+        SK('mean_windows_per_post',    round(float(mean_wposts), 2))
+        print(f'  Corpus unique posts          : {n_corpus:,}')
+        print(f'  Clustered unique posts       : {n_clustered:,}  '
+              f'(noise rate: {noise_rate:.1%})')
+        print(f'  Total window-assignments     : {n_assignments:,}')
+        print(f'  Mean windows per post        : {mean_wposts:.2f}')
+    else:
+        print(f'  WARNING: {gc_path} not found — corpus counts unavailable')
+
+    n_win = (sub['n_windows_total'].iloc[0]
+             if 'n_windows_total' in sub.columns and len(sub) else '?')
+    SK('n_windows_total_reported', n_win if n_win != '?' else None)
+    print(f'  Window / step                : {cfg["window_h"]}h / {step_h}h')
+    print(f'  n_windows_total              : {n_win}')
+    print(f'  Collection span              : {n_days} days')
+
+    # ── 2. Cluster yield ──────────────────────────────────────────────────────
+    print(f'\\n  2. Cluster yield')
+    print(f'  {SEP}')
+
+    n_raw     = len(sub_raw)
+    n_ontopic = len(sub)
+    n_off     = n_raw - n_ontopic
+    SK('n_clusters_raw',      n_raw)
+    SK('n_clusters_ontopic',  n_ontopic)
+    SK('n_clusters_offtopic', n_off)
+    print(f'  Raw clusters                 : {n_raw}')
+    print(f'  Off-topic flagged            : {n_off}')
+
+    if 'on_topic' in sub_raw.columns and 'offtopic_category' in sub_raw.columns:
+        off_sub = sub_raw[
+            ~sub_raw['on_topic'] &
+            sub_raw['offtopic_category'].notna() &
+            (sub_raw['offtopic_category'] != '')
+        ]
+        for cat, cnt in (off_sub.groupby('offtopic_category').size()
+                                .sort_values(ascending=False).items()):
+            SK(f'n_clusters_offtopic_{cat}', int(cnt))
+            print(f'    {cat:<34}: {cnt}')
+
+    print(f'  On-topic clusters            : {n_ontopic}')
+
+    # ── 3. Size distribution ──────────────────────────────────────────────────
+    print(f'\\n  3. Size distribution  (window-assignments per cluster)')
+    print(f'  {SEP}')
+
+    sz = sub['n_posts']
+    q  = sz.quantile([0, 0.25, 0.5, 0.75, 1.0])
+    mu = float(sz.mean())
+    SK('size_min',    int(q[0.00]));  SK('size_p25',    int(q[0.25]))
+    SK('size_median', int(q[0.50]));  SK('size_mean',   round(mu, 1))
+    SK('size_p75',    int(q[0.75]));  SK('size_max',    int(q[1.00]))
+    print(f'  min={int(q[0]):,}  p25={int(q[0.25]):,}  median={int(q[0.5]):,}  '
+          f'mean={mu:.1f}  p75={int(q[0.75]):,}  max={int(q[1.0]):,}')
+    skew_note = 'right-skewed (large clusters inflate mean)' if mu > int(q[0.5]) * 1.1 else 'near-symmetric'
+    print(f'  Median / mean = {int(q[0.5]) / mu:.2f}  ({skew_note})')
+
+    if 'persistence_windows' in sub.columns:
+        n_single    = int((sub['persistence_windows'] == 1).sum())
+        frac_single = n_single / len(sub) if len(sub) else 0.0
+        SK('n_single_window_clusters', n_single)
+        SK('frac_single_window',       round(frac_single, 4))
+        print(f'  Single-window clusters       : {n_single}  ({frac_single:.1%} of on-topic)')
+
+    # ── 4. Persistence and drift ──────────────────────────────────────────────
+    print(f'\\n  4. Persistence and drift')
+    print(f'  {SEP}')
+
+    p_med_w = float(sub['persistence_windows'].median())
+    p_med_f = float(sub['persistence_frac'].median())
+    SK('persistence_windows_median', round(p_med_w, 2))
+    SK('persistence_frac_median',    round(p_med_f, 4))
+    print(f'  Median persistence           : {p_med_w:.1f} windows  ({p_med_f:.3f} of case span)')
+
+    valid_p = sub.dropna(subset=['n_posts', 'persistence_frac'])
+    if len(valid_p) >= 3:
+        X_p = np.log10(valid_p['n_posts'].clip(lower=1)).values.reshape(-1, 1)
+        y_p = valid_p['persistence_frac'].values
+        ols = _LR().fit(X_p, y_p)
+        slp = float(ols.coef_[0])
+        r2  = float(ols.score(X_p, y_p))
+        SK('ols_persistence_slope', round(slp, 4))
+        SK('ols_persistence_r2',    round(r2, 3))
+        print(f'  OLS persistence ~ log10(n)   : slope={slp:.3f}  R²={r2:.3f}')
+
+    wpd = 24.0 / step_h
+    sub['drift_rate_per_day'] = sub['drift_rate'] * wpd
+    med_drift = float(sub['drift_rate_per_day'].median())
+    SK('drift_rate_rad_per_day_median', round(med_drift, 5))
+    print(f'  Median drift rate            : {med_drift:.4f} rad/day  '
+          f'({float(sub["drift_rate"].median()):.5f} rad/window x {wpd:.1f} win/day)')
+
+    dn       = sub['directedness_normalized']
+    dn_undef = int(dn.isna().sum())
+    med_dn   = float(dn.dropna().median()) if dn.notna().any() else float('nan')
+    SK('directedness_normalized_median',    round(med_dn, 3) if not np.isnan(med_dn) else None)
+    SK('directedness_normalized_undefined', dn_undef)
+    dn_str = f'{med_dn:.3f}' if not np.isnan(med_dn) else 'N/A'
+    print(f'  Median directedness (norm.)  : {dn_str}  '
+          f'(undefined for {dn_undef} clusters with < 3 active windows)')
+
+    # ── 5. Region distribution ────────────────────────────────────────────────
+    print(f'\\n  5. Region distribution')
+    print(f'  {SEP}')
+
+    tot     = float(sub['n_posts'].sum())
+    rng_bs  = np.random.default_rng(42)
+    cis     = bootstrap_share(sub, 2000, rng_bs)
+    REGS    = ['contested', 'consolidated', 'fact-relaying']
+    print(f'  {"region":<16}  {"n_clusters":>10}  {"clust%":>7}  '
+          f'{"vol_share":>9}  {"95% CI":<20}  {"mean_size":>9}')
+    for reg in REGS:
+        rs   = sub[sub['region'] == reg]
+        nc   = len(rs)
+        cp   = nc / len(sub) if len(sub) else 0.0
+        vs   = float(rs['n_posts'].sum()) / tot if tot else 0.0
+        lo, hi = cis.get(reg, (float('nan'), float('nan')))
+        msz  = float(rs['n_posts'].mean()) if nc else 0.0
+        SK(f'region_{reg}_n_clusters', nc)
+        SK(f'region_{reg}_cluster_pct', round(cp, 4))
+        SK(f'region_{reg}_vol_share',   round(vs, 4))
+        SK(f'region_{reg}_vol_ci_lo',   round(lo, 4) if not np.isnan(lo) else None)
+        SK(f'region_{reg}_vol_ci_hi',   round(hi, 4) if not np.isnan(hi) else None)
+        SK(f'region_{reg}_mean_size',   round(msz, 1))
+        ci_str = f'[{lo:.3f}, {hi:.3f}]' if not np.isnan(lo) else '[N/A]'
+        print(f'  {reg:<16}  {nc:>10}  {cp:>6.1%}  {vs:>9.3f}  {ci_str:<20}  {msz:>9.0f}')
+
+    # ── 6. Top clusters for review ────────────────────────────────────────────
+    print(f'\\n  6. Top clusters for qualitative review')
+    print(f'  {SEP}')
+
+    RC = [c for c in ['global_cluster_id', 'theme', 'n_posts',
+                       'persistence_windows', 'C', 'p_neutral', 'region']
+          if c in sub.columns]
+
+    def _tbl(title, frame):
+        print(f'\\n  {title}:')
+        for row in frame[RC].itertuples(index=False):
+            th = str(getattr(row, 'theme', ''))[:52]
+            print(f'    [{int(row.global_cluster_id):>3}]  {th:<52}  '
+                  f'n={int(row.n_posts):>6}  C={row.C:.2f}  '
+                  f'pn={row.p_neutral:.2f}  {row.region}')
+
+    top_vol   = sub.nlargest(N_TOP_VOL, 'n_posts')
+    top_c     = sub[sub['n_posts'] >= MIN_POSTS_REVIEW].nlargest(N_TOP_C, 'C')
+    top_resid = (sub.dropna(subset=['persistence_residual_std'])
+                    .nlargest(N_TOP_RESID, 'persistence_residual_std')
+                 if 'persistence_residual_std' in sub.columns else pd.DataFrame())
+
+    _tbl(f'Top {N_TOP_VOL} by window-assignments', top_vol)
+    _tbl(f'Top {N_TOP_C} by controversy (C), n_posts >= {MIN_POSTS_REVIEW}', top_c)
+    if len(top_resid):
+        _tbl(f'Top {N_TOP_RESID} by positive persistence residual', top_resid)
+
+    # ── 7. Qualitative review export ──────────────────────────────────────────
+    print(f'\\n  7. Qualitative review export')
+    print(f'  {SEP}')
+
+    rng_qr  = np.random.default_rng(97 + abs(hash(case)) % 503)
+    fr_pool = sub[sub['region'] == 'fact-relaying']
+    n_fr    = min(N_FR_SAMPLE, len(fr_pool))
+    fr_rand = (fr_pool.sample(n=n_fr, random_state=int(rng_qr.integers(0, 2**31)))
+               if n_fr > 0 else pd.DataFrame())
+
+    parts = [top_vol[RC], top_c[RC]]
+    if len(top_resid): parts.append(top_resid[RC])
+    if len(fr_rand):   parts.append(fr_rand[RC])
+    review = (pd.concat(parts, ignore_index=True)
+                .drop_duplicates(subset=['global_cluster_id'])
+                .copy())
+    review['label_accurate']  = ''
+    review['region_accurate'] = ''
+    review['reviewer_notes']  = ''
+
+    rev_path = ROOT / f'qualitative_review_{case}.csv'
+    review.to_csv(rev_path, index=False)
+    print(f'  qualitative_review_{case}.csv       : {len(review)} clusters')
+
+    # Nearest-centroid posts for each selected cluster
+    if gc_path.exists() and repr_path.exists():
+        gc_full = pd.read_parquet(gc_path, columns=['post_id', 'global_cluster_id', 'is_noise'])
+        gc_full['post_id']  = gc_full['post_id'].astype(str)
+        gc_full['is_noise'] = gc_full['is_noise'].fillna(False).astype(bool)
+        gc_full = gc_full[~gc_full['is_noise'] & gc_full['global_cluster_id'].notna()].copy()
+        gc_full['global_cluster_id'] = gc_full['global_cluster_id'].astype(int)
+
+        repr_df = pd.read_parquet(repr_path)
+        for alias in ('Resource Id', 'tweet_id', 'tweetid', 'post id', 'postid'):
+            if alias in repr_df.columns and 'post_id' not in repr_df.columns:
+                repr_df = repr_df.rename(columns={alias: 'post_id'})
+        repr_df['post_id'] = repr_df['post_id'].astype(str)
+        repr_df = repr_df.drop_duplicates('post_id')
+
+        if 'embedding' in repr_df.columns:
+            sel_cids = review['global_cluster_id'].tolist()
+            gc_sel   = gc_full[gc_full['global_cluster_id'].isin(sel_cids)]
+            repr_sel = (repr_df[repr_df['post_id'].isin(gc_sel['post_id'])]
+                               [['post_id', 'text', 'embedding']])
+            post_rows = []
+            for cid in sel_cids:
+                pids   = gc_sel[gc_sel['global_cluster_id'] == cid]['post_id'].unique()
+                emb_df = repr_sel[repr_sel['post_id'].isin(pids)].reset_index(drop=True)
+                if len(emb_df) == 0:
+                    continue
+                embs     = np.vstack(emb_df['embedding'].values).astype(float)
+                nrm      = np.linalg.norm(embs, axis=1, keepdims=True)
+                embs_n   = embs / np.where(nrm == 0, 1.0, nrm)
+                centroid = embs_n.mean(axis=0)
+                c_nrm    = np.linalg.norm(centroid)
+                centroid = centroid / c_nrm if c_nrm > 0 else centroid
+                dists    = np.arccos(np.clip(embs_n @ centroid, -1.0, 1.0))
+                for rank, idx in enumerate(np.argsort(dists)[:10], 1):
+                    post_rows.append({
+                        'global_cluster_id': int(cid),
+                        'rank': rank,
+                        'post_id': emb_df.at[idx, 'post_id'],
+                        'dist_to_centroid': round(float(dists[idx]), 4),
+                        'text': emb_df.at[idx, 'text'],
+                    })
+            posts_path = ROOT / f'qualitative_review_{case}_posts.csv'
+            pd.DataFrame(post_rows).to_csv(posts_path, index=False)
+            print(f'  qualitative_review_{case}_posts.csv : {len(post_rows)} posts')
+        else:
+            print('  WARNING: embedding column missing in posts_repr.parquet — posts skipped')
+    else:
+        print('  WARNING: source files missing — centroid posts not exported')
+
+
+# ── Run for all three cases ───────────────────────────────────────────────────
+for case in CASES:
+    report_case(case)
+"""))
+
+
 # ── Section 6: Near-duplicate theme detection ─────────────────────────────────
 cells.append(md("""\
 ## 6  Near-Duplicate Theme Detection
