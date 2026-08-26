@@ -860,6 +860,724 @@ for case in CASES:
 """))
 
 
+# ── Section 5c: Sensemaking structural precondition test ─────────────────────
+cells.append(md("""\
+## 5c  Structural Precondition — Collective Sensemaking
+
+Tests whether small *consolidated* clusters form **after** and **semantically near**
+large *fact-relaying* clusters, which is the structural precondition for the
+collective-sensemaking claim in the paper.
+
+**Populations** (constants exposed below):
+- *Anchors*: fact-relaying clusters in the top quartile of `n_posts` for that case.
+- *Responders*: consolidated clusters in the bottom half of `n_posts`.
+
+Each responder is paired to its nearest anchor by cosine similarity of centroids.
+Lag = responder birth − anchor birth, in days (using the case step size so the
+three panels are comparable).
+
+**Confound check**: pairs with cosine similarity above τ = 0.70 may be the *same*
+narrative fragmented by the linkage step, not a genuine anchor → response pair.
+
+**Null**: shuffle birth windows within each population 1 000 times, preserving
+centroid-based pairings. The empirical p-value is the fraction of permuted medians
+(for high-similarity pairs only) at least as large as observed.
+"""))
+
+cells.append(code("""\
+# ── Section 5c constants ──────────────────────────────────────────────────────
+_ANCHOR_PCTILE   = 0.75   # fact-relaying top quartile -> anchor
+_RESP_PCTILE     = 0.50   # consolidated bottom half   -> responder
+_SIM_NULL_THRESH = 0.30   # min cosine sim for 'high-similarity' pairs in null test
+_LINKAGE_TAU     = 0.70   # Hungarian alignment tau for confound check
+_N_PERM          = 1000   # permutation iterations
+
+# ── Load birth / death / centroid per (case, global_cluster_id) ───────────────
+cluster_meta = {}   # (case, gcid) -> {birth, death, centroid, step_days}
+
+for case in CASES:
+    gc_path   = ROOT / 'data' / 'evaluated' / case / 'global_clusters.parquet'
+    repr_path = ROOT / 'data' / 'processed'  / case / 'posts_repr.parquet'
+    step_days = CASE_WINDOWS_CONFIG[case]['step_h'] / 24.0
+
+    if not gc_path.exists():
+        print(f'[{case}] global_clusters.parquet not found -- skipping')
+        continue
+
+    gc = pd.read_parquet(gc_path)
+    gc['post_id']  = gc['post_id'].astype(str)
+    gc['is_noise'] = gc['is_noise'].fillna(False).astype(bool)
+    gc = gc[~gc['is_noise'] & gc['global_cluster_id'].notna()].copy()
+    gc['global_cluster_id'] = gc['global_cluster_id'].astype(int)
+
+    try:
+        gc['window_dt'] = pd.to_datetime(gc['window'], format='%Y-%m-%d-%H', utc=True)
+    except Exception:
+        gc['window_dt'] = pd.to_datetime(gc['window'], utc=True)
+
+    sorted_wins = sorted(gc['window_dt'].unique())
+    win_idx_map = {w: i for i, w in enumerate(sorted_wins)}
+    gc['window_idx'] = gc['window_dt'].map(win_idx_map)
+
+    agg = gc.groupby('global_cluster_id').agg(
+        birth=('window_idx', 'min'),
+        death=('window_idx', 'max'),
+    )
+
+    sub_on       = df_on[df_on['case'] == case]
+    target_gcids = set(sub_on['global_cluster_id'].astype(int).tolist())
+    gc_target    = gc[gc['global_cluster_id'].isin(target_gcids)]
+    target_pids  = set(gc_target['post_id'].unique())
+
+    if not repr_path.exists():
+        print(f'[{case}] posts_repr.parquet not found -- centroids unavailable')
+        continue
+
+    print(f'[{case}] Loading embeddings ({len(target_pids):,} posts, {len(target_gcids)} clusters)...')
+    try:
+        repr_df = pd.read_parquet(repr_path, columns=['post_id', 'embedding'])
+    except Exception:
+        repr_df = pd.read_parquet(repr_path)
+    for alias in ('Resource Id', 'tweet_id', 'tweetid'):
+        if alias in repr_df.columns and 'post_id' not in repr_df.columns:
+            repr_df = repr_df.rename(columns={alias: 'post_id'})
+    repr_df['post_id'] = repr_df['post_id'].astype(str)
+    repr_df = repr_df[repr_df['post_id'].isin(target_pids)].drop_duplicates('post_id')
+
+    if 'embedding' not in repr_df.columns:
+        print(f'[{case}] No embedding column -- centroids unavailable')
+        continue
+
+    pid_to_emb = dict(zip(repr_df['post_id'], repr_df['embedding']))
+
+    n_ok = 0
+    for gcid in target_gcids:
+        pids = gc_target[gc_target['global_cluster_id'] == gcid]['post_id'].unique()
+        embs = [pid_to_emb[p] for p in pids if p in pid_to_emb]
+        if not embs:
+            continue
+        E    = np.vstack(embs).astype(float)
+        nrm  = np.linalg.norm(E, axis=1, keepdims=True)
+        En   = E / np.where(nrm == 0, 1.0, nrm)
+        c    = En.mean(axis=0)
+        cn   = np.linalg.norm(c)
+        cent = c / cn if cn > 0 else c
+        b    = int(agg.at[gcid, 'birth']) if gcid in agg.index else None
+        d    = int(agg.at[gcid, 'death']) if gcid in agg.index else None
+        cluster_meta[(case, gcid)] = {
+            'birth': b, 'death': d, 'centroid': cent, 'step_days': step_days,
+        }
+        n_ok += 1
+    print(f'[{case}] done -- {n_ok}/{len(target_gcids)} centroids computed')
+
+# ── Coverage assert against df_on ─────────────────────────────────────────────
+n_cov = sum(1 for _, r in df_on.iterrows()
+            if (r['case'], int(r['global_cluster_id'])) in cluster_meta)
+n_tot = len(df_on)
+print(f'\\nCoverage: {n_cov}/{n_tot} df_on clusters ({n_cov/n_tot:.1%})')
+if n_cov < n_tot:
+    miss = [(r['case'], int(r['global_cluster_id']))
+            for _, r in df_on.iterrows()
+            if (r['case'], int(r['global_cluster_id'])) not in cluster_meta]
+    print(f'  Missing {len(miss)} clusters (first 5: {miss[:5]})')
+"""))
+
+cells.append(code("""\
+# ── Define populations and pair each responder to nearest anchor ──────────────
+pair_records = []
+
+for case in CASES:
+    sub = df_on[df_on['case'] == case].copy()
+    sub['global_cluster_id'] = sub['global_cluster_id'].astype(int)
+
+    fr   = sub[sub['region'] == 'fact-relaying'].copy()
+    cons = sub[sub['region'] == 'consolidated'].copy()
+
+    if len(fr) == 0 or len(cons) == 0:
+        print(f'{case}: missing fact-relaying or consolidated clusters -- skipped')
+        STATS[f'{case}_n_anchors']    = 0
+        STATS[f'{case}_n_responders'] = 0
+        continue
+
+    a_thresh = float(fr['n_posts'].quantile(_ANCHOR_PCTILE))
+    r_thresh = float(cons['n_posts'].quantile(_RESP_PCTILE))
+
+    anchors    = [int(g) for g in fr[fr['n_posts']    >= a_thresh]['global_cluster_id']
+                  if (case, int(g)) in cluster_meta]
+    responders = [int(g) for g in cons[cons['n_posts'] <= r_thresh]['global_cluster_id']
+                  if (case, int(g)) in cluster_meta]
+
+    STATS[f'{case}_n_anchors']    = len(anchors)
+    STATS[f'{case}_n_responders'] = len(responders)
+    print(f'{case}:')
+    print(f'  fact-relaying total={len(fr)}, n_posts>={a_thresh:.0f} -> {len(anchors)} anchors')
+    print(f'  consolidated total={len(cons)}, n_posts<={r_thresh:.0f} -> {len(responders)} responders')
+    if len(anchors) < 3:
+        print(f'  WARNING: only {len(anchors)} anchors -- analysis may be underpowered')
+    if len(anchors) == 0 or len(responders) == 0:
+        continue
+
+    A_cent = np.stack([cluster_meta[(case, g)]['centroid'] for g in anchors])
+
+    for rid in responders:
+        rc      = cluster_meta[(case, rid)]['centroid']
+        sims    = A_cent @ rc                                 # cosine similarities
+        best_i  = int(np.argmax(sims))
+        aid     = anchors[best_i]
+        cos_sim = float(np.clip(sims[best_i], -1.0, 1.0))
+
+        rb = cluster_meta[(case, rid)]['birth']
+        ab = cluster_meta[(case, aid)]['birth']
+        sd = cluster_meta[(case, rid)]['step_days']
+        lag_days = (rb - ab) * sd if (rb is not None and ab is not None) else float('nan')
+
+        r_np = int(sub.loc[sub['global_cluster_id'] == rid, 'n_posts'].values[0])
+        pair_records.append({
+            'case': case, 'responder_id': rid, 'anchor_id': aid,
+            'cosine_sim': cos_sim, 'lag_days': lag_days,
+            'responder_n_posts': r_np,
+            'responder_birth': rb, 'anchor_birth': ab,
+        })
+
+pairs = pd.DataFrame(pair_records)
+print(f'\\nTotal responder-anchor pairs: {len(pairs)}')
+if len(pairs):
+    print(pairs.groupby('case')[['cosine_sim', 'lag_days']].agg(['median', 'mean']).round(3))
+"""))
+
+cells.append(code("""\
+# ── Confound check: pairs above linkage tau ────────────────────────────────────
+print(f'Confound check  (tau={_LINKAGE_TAU} cosine similarity)')
+print('Pairs above tau could be the same narrative fragmented by the linkage step,')
+print('not a genuine anchor -> response pair.  Report this before drawing conclusions.')
+print()
+for case in CASES:
+    cp = pairs[pairs['case'] == case] if len(pairs) else pd.DataFrame()
+    if len(cp) == 0:
+        print(f'  {case}: no pairs')
+        continue
+    above   = cp[cp['cosine_sim'] > _LINKAGE_TAU]
+    n_above = len(above)
+    share   = n_above / len(cp)
+    STATS[f'{case}_above_tau_n_pairs'] = n_above
+    STATS[f'{case}_above_tau_share']   = round(share, 4)
+    flag = '  *** HIGH -- sensemaking interpretation confounded with linkage artifact' if share > 0.3 else ''
+    print(f'  {case}: {n_above}/{len(cp)} pairs ({share:.1%}) above tau{flag}')
+    if n_above > 0:
+        print(f'    above-tau  median cosine_sim={above["cosine_sim"].median():.3f}  '
+              f'lag_days={above["lag_days"].median():.2f}')
+"""))
+
+cells.append(code("""\
+# ── Permutation null test ─────────────────────────────────────────────────────
+# Null: shuffle birth indices within each population (anchors and responders
+# separately), preserving centroid-based pairings.
+# Statistic: median lag_days for high-similarity pairs (cosine_sim > _SIM_NULL_THRESH).
+# p-value: fraction of permuted medians >= observed.
+
+rng_null = np.random.default_rng(42)
+shuf_med_per_case = {}
+
+if len(pairs) == 0:
+    print('No pairs -- null test skipped')
+else:
+    print(f'Permutation null test  (n={_N_PERM} permutations, '
+          f'high-sim threshold={_SIM_NULL_THRESH})')
+    print()
+    for case in CASES:
+        cp = pairs[pairs['case'] == case].copy()
+        if len(cp) == 0:
+            continue
+
+        hi = cp[cp['cosine_sim'] > _SIM_NULL_THRESH]
+        if len(hi) == 0:
+            print(f'  {case}: no high-sim pairs (threshold={_SIM_NULL_THRESH}) -- skipped')
+            continue
+
+        obs_med = float(hi['lag_days'].dropna().median())
+
+        anchor_pool = cp['anchor_id'].unique().tolist()
+        resp_pool   = cp['responder_id'].unique().tolist()
+        a_births    = np.array([cluster_meta[(case, g)]['birth'] for g in anchor_pool],
+                               dtype=float)
+        r_births    = np.array([cluster_meta[(case, g)]['birth'] for g in resp_pool],
+                               dtype=float)
+        sd          = cluster_meta[(case, resp_pool[0])]['step_days']
+
+        a_idx_map = {g: i for i, g in enumerate(anchor_pool)}
+        r_idx_map = {g: i for i, g in enumerate(resp_pool)}
+
+        # Precompute row indices into the pool arrays for the high-sim subset
+        hi_r_idx = np.array([r_idx_map[g] for g in hi['responder_id']])
+        hi_a_idx = np.array([a_idx_map[g] for g in hi['anchor_id']])
+
+        boot_meds = np.empty(_N_PERM)
+        for k in range(_N_PERM):
+            sa = rng_null.permutation(a_births)
+            sr = rng_null.permutation(r_births)
+            boot_meds[k] = np.median((sr[hi_r_idx] - sa[hi_a_idx]) * sd)
+
+        p_val    = float(np.mean(boot_meds >= obs_med))
+        shuf_med = float(np.median(boot_meds))
+        shuf_med_per_case[case] = shuf_med
+
+        STATS[f'{case}_sensemaking_obs_med_lag']      = round(obs_med, 3)
+        STATS[f'{case}_sensemaking_shuf_med_lag']     = round(shuf_med, 3)
+        STATS[f'{case}_sensemaking_p_value']          = round(p_val, 4)
+        STATS[f'{case}_sensemaking_n_high_sim_pairs'] = int(len(hi))
+
+        sig = '  *' if p_val < 0.05 else ('  .' if p_val < 0.10 else '')
+        print(f'  {case}: n_hi={len(hi)}  obs_med={obs_med:.2f}d  '
+              f'shuf_med={shuf_med:.2f}d  p={p_val:.4f}{sig}')
+"""))
+
+cells.append(code("""\
+# ── Figure 1: precedence vs proximity scatter (1x3) ──────────────────────────
+import matplotlib.pyplot as plt
+
+_C_LABEL  = {'venezuela': 'Venezuela', 'iran': 'Iran', 'russia': 'Russia-Ukraine'}
+_CASE_ORD = ['venezuela', 'iran', 'russia']
+
+if len(pairs) == 0:
+    print('No pairs to plot')
+else:
+    all_lags = pairs['lag_days'].dropna()
+    y_lo = min(-5.0, float(all_lags.min()) - 2) if len(all_lags) else -10.0
+    y_hi = max( 5.0, float(all_lags.max()) + 2) if len(all_lags) else  10.0
+
+    fig1, axes1 = plt.subplots(1, 3, figsize=(12.0, 4.2), sharey=True, sharex=True)
+    plt.subplots_adjust(wspace=0.06)
+
+    for ax, case in zip(axes1, _CASE_ORD):
+        cp = pairs[pairs['case'] == case]
+        if len(cp) == 0:
+            ax.set_title(f'{_C_LABEL[case]}\\n(no pairs)', fontsize=8)
+            ax.set_xlabel('Cosine similarity', fontsize=7)
+            continue
+
+        sims  = cp['cosine_sim'].values
+        lags  = cp['lag_days'].values
+        sizes = np.sqrt(cp['responder_n_posts'].values.astype(float)) * 3.5
+
+        ax.scatter(sims, lags, s=sizes, alpha=0.55, color='#4a7ca8',
+                   edgecolors='white', linewidths=0.3, zorder=3)
+        ax.axhline(0.0, color='#333', lw=0.8, zorder=2)
+
+        # Shade upper-right: candidate sensemaking quadrant
+        ax.axvspan(_SIM_NULL_THRESH, 1.01, ymin=0.5, ymax=1.0,
+                   alpha=0.07, color='#2ca02c', zorder=1)
+        ax.text(0.99, 0.99, 'candidate\\nsensemaking',
+                ha='right', va='top', transform=ax.transAxes,
+                fontsize=6.0, color='#2ca02c', fontstyle='italic')
+
+        if case in shuf_med_per_case:
+            ax.axhline(shuf_med_per_case[case], color='#888', lw=0.8,
+                       ls='--', zorder=4, label='null median')
+
+        n_a  = STATS.get(f'{case}_n_anchors', 0)
+        n_r  = STATS.get(f'{case}_n_responders', 0)
+        p    = STATS.get(f'{case}_sensemaking_p_value', float('nan'))
+        p_s  = f'p={p:.3f}' if p == p else 'p=N/A'
+        ax.set_title(f'{_C_LABEL[case]}\\nA={n_a}, R={n_r}, {p_s}', fontsize=8)
+        ax.set_xlabel('Cosine similarity to nearest anchor', fontsize=7)
+        ax.set_xlim(-0.05, 1.05)
+
+    axes1[0].set_ylabel('Lag (days,  responder birth - anchor birth)', fontsize=8)
+    axes1[0].set_ylim(y_lo, y_hi)
+
+    # Size legend
+    for n_post, lbl in [(10, '10'), (100, '100'), (500, '500')]:
+        axes1[-1].scatter([], [], s=float(np.sqrt(n_post)) * 3.5,
+                          color='#4a7ca8', alpha=0.6, label=f'n = {lbl}')
+    axes1[-1].legend(fontsize=6, title='responder n_posts', title_fontsize=6,
+                     loc='upper left', framealpha=0.6)
+
+    fig1.suptitle(
+        'Sensemaking precondition: consolidated-cluster birth lag vs '
+        'semantic proximity to nearest fact-relaying anchor',
+        fontsize=8, y=1.01)
+
+    fig_dir = ROOT / 'analysis' / 'figures'
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    for ext in ('pdf', 'png'):
+        fig1.savefig(fig_dir / f'sensemaking_scatter.{ext}', dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f'Saved -> {fig_dir}/sensemaking_scatter.pdf')
+"""))
+
+cells.append(code("""\
+# ── Figure 2: timeline (3x1) ─────────────────────────────────────────────────
+import matplotlib.pyplot as plt
+import matplotlib.cm as _cm
+
+fig_dir = ROOT / 'analysis' / 'figures'
+fig_dir.mkdir(parents=True, exist_ok=True)
+
+if len(pairs) == 0:
+    print('No pairs to plot')
+else:
+    _cmap     = _cm.YlOrRd
+    _sim_norm = plt.Normalize(vmin=0.0, vmax=1.0)
+
+    fig2, axes2 = plt.subplots(3, 1, figsize=(11.0, 11.0), constrained_layout=True)
+
+    for ax2, case in zip(axes2, _CASE_ORD):
+        cp   = pairs[pairs['case'] == case]
+        sub  = df_on[df_on['case'] == case]
+        sd   = CASE_WINDOWS_CONFIG[case]['step_h'] / 24.0
+
+        if len(cp) == 0:
+            ax2.set_title(f'{_C_LABEL[case]} -- no pairs', fontsize=8)
+            continue
+
+        # Anchors sorted by birth day
+        anchor_gcids = sorted(cp['anchor_id'].unique().tolist(),
+                              key=lambda g: (cluster_meta[(case, g)]['birth'] or 0))
+        y_anchor = {g: i for i, g in enumerate(anchor_gcids)}
+
+        for g in anchor_gcids:
+            meta  = cluster_meta[(case, g)]
+            b_day = (meta['birth'] or 0) * sd
+            d_day = (meta['death'] or meta['birth'] or 0) * sd
+            yp    = y_anchor[g]
+            ax2.barh(yp, d_day - b_day, left=b_day, height=0.45,
+                     color='#4a7ca8', alpha=0.75, zorder=2)
+
+        # Responder births as tick marks below each anchor row
+        for _, row in cp.iterrows():
+            rm = cluster_meta.get((case, int(row['responder_id'])))
+            if rm is None or rm['birth'] is None:
+                continue
+            if row['lag_days'] != row['lag_days']:   # NaN check
+                continue
+            r_day = rm['birth'] * sd
+            yp    = y_anchor.get(row['anchor_id'], -1)
+            color = _cmap(_sim_norm(row['cosine_sim']))
+            msize = max(3.0, float(np.sqrt(row['responder_n_posts'])) * 1.5)
+            ax2.plot(r_day, yp - 0.42, marker='|', ms=msize, color=color,
+                     markeredgewidth=1.8, ls='none', alpha=0.85, zorder=3)
+
+        # Y-tick labels: shortened theme
+        ytick_labels = []
+        for g in anchor_gcids:
+            t_rows = sub[sub['global_cluster_id'] == g]['theme']
+            lbl = str(t_rows.iloc[0])[:38] if len(t_rows) else f'cluster {g}'
+            ytick_labels.append(lbl)
+        ax2.set_yticks(range(len(anchor_gcids)))
+        ax2.set_yticklabels(ytick_labels, fontsize=5.5)
+        ax2.set_title(_C_LABEL[case], fontsize=9)
+        ax2.set_xlabel('Days from case start', fontsize=7)
+        ax2.set_xlim(left=0)
+
+    # Shared colorbar
+    sm2 = _cm.ScalarMappable(cmap=_cmap, norm=_sim_norm)
+    sm2.set_array([])
+    cbar2 = fig2.colorbar(sm2, ax=axes2, fraction=0.015, pad=0.02)
+    cbar2.set_label('Cosine similarity to nearest anchor', fontsize=8)
+
+    fig2.suptitle(
+        'Anchor activity (bars) with responder births (| tick, color = similarity)',
+        fontsize=8)
+
+    for ext in ('pdf', 'png'):
+        fig2.savefig(fig_dir / f'sensemaking_timeline.{ext}', dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f'Saved -> {fig_dir}/sensemaking_timeline.pdf')
+"""))
+
+
+# ── Section 5d: Duplication and amplification analysis ───────────────────────
+cells.append(md("""\
+## 5d  Duplication and Amplification Analysis
+
+The *consolidated* region cannot distinguish genuine convergence among independent
+participants from a single message amplified many times. This section tests
+whether clusters in that region are built from diverse original posts or from
+a dominant template/retweet.
+
+**Text normalization** strips RT prefix, leading @-mention runs (mass-reply
+templates differ only in the addressee), URLs, trailing hashtags, then lowercases
+and collapses whitespace. Five before/after examples per case are printed for
+sanity-checking.
+
+**Measures per cluster**:
+- `single_source_dominance`: share of posts accounted for by the single most
+  frequent normalized text.
+- `distinct_text_ratio`: unique normalized texts ÷ post count (less sensitive to
+  one dominant message; catches clusters built from a handful of templates).
+
+Posts are deduplicated on `(post_id, global_cluster_id)` before computing
+cluster measures (a post appearing in multiple windows counts once per cluster).
+Case-level retweet and non-unique-text shares use a further dedup on `post_id`.
+"""))
+
+cells.append(code("""\
+import re
+from scipy.stats import mannwhitneyu, spearmanr
+
+_DOM_THRESHOLD = 0.50   # clusters above this are flagged as high-dominance
+
+def _norm_text(t):
+    '''
+    Normalize post text for duplication detection.
+    Strips RT prefix, leading @-mention runs, URLs, trailing hashtag
+    runs, lowercases, collapses whitespace.
+    '''
+    if not isinstance(t, str):
+        t = '' if (t != t) else str(t)
+    t = re.sub(r'^RT @\\w+:\\s*', '', t)           # leading retweet marker
+    t = re.sub(r'^(@\\w+\\s+)+', '', t)            # leading @mention runs
+    t = re.sub(r'https?://\\S+', '', t)            # URLs
+    t = t.lower()
+    t = re.sub(r'\\s+', ' ', t)
+    t = re.sub(r'(\\s+#\\w+)+\\s*$', '', t)        # trailing hashtag runs
+    return t.strip()
+
+# ── Load and join (post_id, global_cluster_id, text) per case ────────────────
+_post_frames = {}   # case -> DataFrame (post_id, global_cluster_id, text, text_norm)
+
+for case in CASES:
+    gc_path   = ROOT / 'data' / 'evaluated' / case / 'global_clusters.parquet'
+    repr_path = ROOT / 'data' / 'processed'  / case / 'posts_repr.parquet'
+
+    if not gc_path.exists() or not repr_path.exists():
+        print(f'[{case}] missing files -- skipping')
+        continue
+
+    # Dedup on (post_id, global_cluster_id) to avoid window inflation
+    gc = pd.read_parquet(gc_path, columns=['post_id', 'global_cluster_id', 'is_noise'])
+    gc['post_id']  = gc['post_id'].astype(str)
+    gc['is_noise'] = gc['is_noise'].fillna(False).astype(bool)
+    gc = gc[~gc['is_noise'] & gc['global_cluster_id'].notna()].copy()
+    gc['global_cluster_id'] = gc['global_cluster_id'].astype(int)
+    gc = gc.drop_duplicates(subset=['post_id', 'global_cluster_id'])
+
+    # Restrict to on-topic clusters
+    ontopic_ids = set(df_on[df_on['case'] == case]['global_cluster_id'].astype(int))
+    gc = gc[gc['global_cluster_id'].isin(ontopic_ids)]
+
+    # Load text only (skip embeddings to save memory)
+    try:
+        repr_df = pd.read_parquet(repr_path, columns=['post_id', 'text'])
+    except Exception:
+        repr_df = pd.read_parquet(repr_path)
+    for alias in ('Resource Id', 'tweet_id', 'tweetid'):
+        if alias in repr_df.columns and 'post_id' not in repr_df.columns:
+            repr_df = repr_df.rename(columns={alias: 'post_id'})
+    repr_df['post_id'] = repr_df['post_id'].astype(str)
+    repr_df = repr_df.drop_duplicates('post_id')
+    if 'text' not in repr_df.columns:
+        print(f'[{case}] No text column in posts_repr.parquet -- skipping')
+        continue
+
+    merged = gc.merge(repr_df[['post_id', 'text']], on='post_id', how='left')
+    merged['text_norm'] = merged['text'].apply(_norm_text)
+    _post_frames[case] = merged
+    n_pairs   = len(merged)
+    n_unique  = merged['post_id'].nunique()
+    print(f'[{case}] {n_pairs:,} (post, cluster) pairs  ({n_unique:,} unique posts)')
+
+    # Print 5 before/after examples where normalization changed something
+    changed = (merged[merged['text'].astype(str) != merged['text_norm']]
+               .drop_duplicates('post_id')
+               .head(5))
+    if len(changed):
+        print(f'  Normalization examples:')
+        for _, row in changed.iterrows():
+            print(f'    before: {str(row["text"])[:88]}')
+            print(f'    after : {str(row["text_norm"])[:88]}')
+            print()
+    else:
+        print('  WARNING: no posts changed by normalization -- rules may not match this data')
+"""))
+
+cells.append(code("""\
+# ── Case-level measures ───────────────────────────────────────────────────────
+print('Case-level:  (dedup on post_id)')
+print()
+
+for case in CASES:
+    if case not in _post_frames:
+        continue
+    mf = _post_frames[case]
+    unique_posts = mf.drop_duplicates('post_id')
+    n_posts      = len(unique_posts)
+
+    rt_share    = float(unique_posts['text'].str.startswith('RT @', na=False).mean())
+    norm_vc     = unique_posts['text_norm'].value_counts()
+    nonuniq     = int((unique_posts['text_norm'].map(norm_vc) > 1).sum())
+    nonuniq_sh  = nonuniq / n_posts if n_posts else 0.0
+
+    STATS[f'{case}_retweet_share']       = round(rt_share, 4)
+    STATS[f'{case}_nonunique_text_share'] = round(nonuniq_sh, 4)
+    print(f'  {case}: n_posts={n_posts:,}  retweet_share={rt_share:.1%}  '
+          f'non-unique_text_norm={nonuniq_sh:.1%}')
+
+# ── Cluster-level measures: vectorized ───────────────────────────────────────
+print()
+print('Cluster-level measures...')
+
+for case in CASES:
+    if case not in _post_frames:
+        continue
+    mf    = _post_frames[case]
+
+    # single_source_dominance: share of posts with modal normalized text
+    top_freq = (mf.groupby(['global_cluster_id', 'text_norm']).size()
+                  .groupby(level=0).max())
+    total    = mf.groupby('global_cluster_id').size()
+    dom      = (top_freq / total).rename('single_source_dominance')
+
+    # distinct_text_ratio
+    n_uniq   = mf.groupby('global_cluster_id')['text_norm'].nunique()
+    dist     = (n_uniq / total).rename('distinct_text_ratio')
+
+    # Merge into df_on for this case
+    idx = df_on['case'] == case
+    gcids = df_on.loc[idx, 'global_cluster_id'].astype(int)
+    df_on.loc[idx, 'single_source_dominance'] = gcids.map(dom).values
+    df_on.loc[idx, 'distinct_text_ratio']     = gcids.map(dist).values
+    n_ok = int(gcids.isin(dom.index).sum())
+    print(f'  [{case}] {n_ok}/{idx.sum()} clusters have dominance data')
+
+n_nonnull = int(df_on['single_source_dominance'].notna().sum())
+print(f'\\ndf_on: single_source_dominance non-null = {n_nonnull}/{len(df_on)}')
+"""))
+
+cells.append(code("""\
+# ── Reporting: region breakdown + Mann-Whitney ────────────────────────────────
+REGS_ORD = ['contested', 'consolidated', 'fact-relaying']
+hdr = (f'  {"region":<16}  {"n":>4}  {"med_dom":>8}  {"IQR_dom":>12}  '
+       f'{"med_dist":>9}  {"IQR_dist":>12}  {">thresh":>8}  {"share":>7}')
+
+for case in CASES:
+    sub = df_on[df_on['case'] == case].dropna(subset=['single_source_dominance'])
+    if len(sub) == 0:
+        print(f'{case}: no dominance data')
+        continue
+    print(f'{case}:')
+    print(hdr)
+    for reg in REGS_ORD:
+        rs  = sub[sub['region'] == reg]
+        if len(rs) == 0:
+            print(f'  {reg:<16}  --')
+            continue
+        dom  = rs['single_source_dominance']
+        dist = rs['distinct_text_ratio']
+        q1d, q3d = float(dom.quantile(0.25)), float(dom.quantile(0.75))
+        q1r, q3r = float(dist.quantile(0.25)), float(dist.quantile(0.75))
+        n_ab  = int((dom > _DOM_THRESHOLD).sum())
+        sh_ab = n_ab / len(rs)
+        STATS[f'{case}_{reg}_median_dominance']      = round(float(dom.median()), 4)
+        STATS[f'{case}_{reg}_median_distinct_ratio'] = round(float(dist.median()), 4)
+        STATS[f'{case}_{reg}_share_above_threshold'] = round(sh_ab, 4)
+        print(f'  {reg:<16}  {len(rs):>4}  {dom.median():>8.3f}  '
+              f'[{q1d:.2f},{q3d:.2f}]  {dist.median():>9.3f}  '
+              f'[{q1r:.2f},{q3r:.2f}]  {n_ab:>8}  {sh_ab:>6.1%}')
+
+    # Mann-Whitney: consolidated > contested
+    cons_d = sub[sub['region'] == 'consolidated']['single_source_dominance'].dropna()
+    cont_d = sub[sub['region'] == 'contested']['single_source_dominance'].dropna()
+    if len(cons_d) >= 3 and len(cont_d) >= 3:
+        stat_mw, p_mw = mannwhitneyu(cons_d, cont_d, alternative='greater')
+        STATS[f'{case}_dom_mw_U']  = round(float(stat_mw), 1)
+        STATS[f'{case}_dom_mw_p']  = round(float(p_mw), 4)
+        sig = '  *' if p_mw < 0.05 else ('  .' if p_mw < 0.10 else '')
+        print(f'  MW (consolidated > contested): U={stat_mw:.0f}  p={p_mw:.4f}{sig}')
+    else:
+        print(f'  MW: insufficient data (consolidated={len(cons_d)}, contested={len(cont_d)})')
+    print()
+
+# ── Correlation: dominance vs C ───────────────────────────────────────────────
+print('Spearman correlation: single_source_dominance ~ C')
+for case in CASES:
+    sub = df_on[df_on['case'] == case].dropna(subset=['single_source_dominance', 'C'])
+    if len(sub) < 5:
+        print(f'  {case}: insufficient data')
+        continue
+    rho, p_rho = spearmanr(sub['single_source_dominance'], sub['C'])
+    STATS[f'{case}_dom_C_rho'] = round(float(rho), 4)
+    STATS[f'{case}_dom_C_p']   = round(float(p_rho), 4)
+    note = ('dominance partially explains low controversy' if rho < -0.2
+            else ('positive -- high-amplification clusters are also polarizing' if rho > 0.2
+                  else 'weak relationship'))
+    print(f'  {case}: rho={rho:.3f}  p={p_rho:.4f}  ({note})')
+"""))
+
+cells.append(code("""\
+# ── Figure: single_source_dominance vs C, colored by region (1x3) ───────────
+import matplotlib.pyplot as plt
+
+_REG_COLOR = {
+    'contested':     '#d62728',
+    'consolidated':  '#1f77b4',
+    'fact-relaying': '#2ca02c',
+}
+_C_LABEL  = {'venezuela': 'Venezuela', 'iran': 'Iran', 'russia': 'Russia-Ukraine'}
+_CASE_ORD = ['venezuela', 'iran', 'russia']
+
+fig, axes = plt.subplots(1, 3, figsize=(12.0, 4.2), sharey=True, sharex=True)
+plt.subplots_adjust(wspace=0.06)
+
+plotted_handles = {}
+
+for ax, case in zip(axes, _CASE_ORD):
+    sub = df_on[df_on['case'] == case].dropna(subset=['single_source_dominance', 'C'])
+    if len(sub) == 0:
+        ax.set_title(f'{_C_LABEL[case]}\\n(no data)', fontsize=8)
+        ax.set_xlabel('Single-source dominance', fontsize=7)
+        continue
+
+    # Plot in order: fact-relaying, consolidated, contested (contested on top)
+    for reg in ['fact-relaying', 'consolidated', 'contested']:
+        rs = sub[sub['region'] == reg]
+        if len(rs) == 0:
+            continue
+        sizes = np.sqrt(rs['n_posts'].clip(lower=1).values.astype(float)) * 3.5
+        sc = ax.scatter(rs['single_source_dominance'], rs['C'],
+                        s=sizes, color=_REG_COLOR.get(reg, '#999'),
+                        alpha=0.55, edgecolors='white', linewidths=0.3,
+                        label=reg, zorder=3)
+        if reg not in plotted_handles:
+            plotted_handles[reg] = sc
+
+    ax.axvline(_DOM_THRESHOLD, color='#555', lw=0.7, ls=':', zorder=2,
+               label=f'dom={_DOM_THRESHOLD}')
+    ax.set_xlabel('Single-source dominance', fontsize=7)
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+
+    # Annotate rho
+    rho = STATS.get(f'{case}_dom_C_rho', float('nan'))
+    p_r = STATS.get(f'{case}_dom_C_p',   float('nan'))
+    rho_str = f'rho={rho:.2f}, p={p_r:.3f}' if rho == rho else ''
+    ax.text(0.02, 0.98, rho_str, ha='left', va='top',
+            transform=ax.transAxes, fontsize=6.5, color='#333')
+    ax.set_title(_C_LABEL[case], fontsize=9)
+
+axes[0].set_ylabel('Controversy score (C)', fontsize=8)
+
+# Legend
+import matplotlib.patches as mpatches
+reg_patches = [mpatches.Patch(color=c, label=r, alpha=0.7)
+               for r, c in _REG_COLOR.items()]
+axes[-1].legend(handles=reg_patches, fontsize=6, loc='upper right',
+                framealpha=0.7, title='region', title_fontsize=6)
+
+fig.suptitle(
+    'Amplification vs controversy: single-source dominance vs C, by region\\n'
+    '(dotted = dominance threshold; size proportional to sqrt(n_posts))',
+    fontsize=8, y=1.02)
+
+fig_dir = ROOT / 'analysis' / 'figures'
+fig_dir.mkdir(parents=True, exist_ok=True)
+for ext in ('pdf', 'png'):
+    fig.savefig(fig_dir / f'duplication_scatter.{ext}', dpi=150, bbox_inches='tight')
+plt.show()
+print(f'Saved -> {fig_dir}/duplication_scatter.pdf')
+"""))
+
+
 # ── Section 6: Near-duplicate theme detection ─────────────────────────────────
 cells.append(md("""\
 ## 6  Near-Duplicate Theme Detection
